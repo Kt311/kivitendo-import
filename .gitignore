@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.xrechnung-backups/
+upload/
+*.pdf
+*.xlsx
+*.zip

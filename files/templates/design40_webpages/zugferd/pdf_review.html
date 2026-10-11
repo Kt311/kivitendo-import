@@ -1,0 +1,26 @@
+[% USE L %][% USE P %]
+<div class="wrapper">
+<h2>PDF-Rechnung: Angaben mit dem Original vergleichen</h2>
+<p>Die Erkennung ist ein Vorschlag. Bitte insbesondere Lieferant, Rechnungsnummer, Datum, Positionen und Summen pruefen. Keine automatische Buchung. Nur normale Rechnungen mit 0, 7 oder 19 %; keine Gutschriften oder Reverse-Charge-Faelle.</p>
+[% IF review_error %]<p class="message_error">[% review_error | html %]</p>[% END %]
+[% FOREACH warning = values.warnings %]<p><strong>[% warning | html %]</strong></p>[% END %]
+<form method="post" action="controller.pl" id="form">
+[% L.hidden_tag('pdf_session_file', session_file) %]
+<table>
+<tr><th>Lieferant (bewusst auswaehlen)</th><td>[% P.customer_vendor.picker('pdf_vendor_id', values.vendor_id, type='vendor') %]</td></tr>
+<tr><th>Rechnungsnummer</th><td>[% L.input_tag('pdf_invnumber', values.invnumber) %]</td></tr>
+<tr><th>Rechnungsdatum (TT.MM.JJJJ)</th><td>[% L.input_tag('pdf_transdate', values.transdate) %]</td></tr>
+<tr><th>Waehrung (z. B. EUR)</th><td>[% L.input_tag('pdf_currency', values.currency) %]</td></tr>
+<tr><th>Netto gesamt</th><td>[% L.input_tag('pdf_net_total', values.net_total) %]</td></tr>
+<tr><th>Steuer gesamt</th><td>[% L.input_tag('pdf_tax_total', values.tax_total) %]</td></tr>
+<tr><th>Brutto gesamt</th><td>[% L.input_tag('pdf_gross_total', values.gross_total) %]</td></tr>
+</table>
+<p>Eine Position pro Zeile: <strong>Bezeichnung | Menge | Netto-Gesamtbetrag | Steuer-%</strong><br>Beispiel: Webhosting | 1 | 10,00 | 19<br>Erkannte Sammelpositionen bei Bedarf durch Einzelpositionen ersetzen. Netto-Gesamtbetrag ist die Zeilensumme, kein Stueckpreis.</p>
+<textarea name="pdf_items_text" rows="10" cols="100">[% values.items_text | html %]</textarea>
+<p>[% L.checkbox_tag('pdf_confirmed', value=1, label='Ich habe Lieferant, Rechnungsdaten, Positionen und Summen mit der Original-PDF verglichen. Eine Sammelposition uebernehme ich gegebenenfalls bewusst.') %]</p>
+<button type="submit" name="action" value="ZUGFeRD/confirm_pdf">Gepruefte Daten uebernehmen und Artikel zuordnen</button>
+<a href="controller.pl?action=ZUGFeRD/upload_zugferd">Abbrechen</a>
+</form>
+<details><summary>Ausgelesener PDF-Text (kann unvollstaendig sein)</summary><pre>[% values.text | html %]</pre></details>
+<p>Die Original-PDF bitte in kivitendo am fertigen Beleg ablegen. Dieser Import ersetzt keine Originalrechnung.</p>
+</div>

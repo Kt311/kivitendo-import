@@ -1,0 +1,21 @@
+name: Tests and package
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - run: perl tests/sales_report.t files
+      - run: perl tests/price_rules_without_customer.t files
+      - run: python3 tools/build_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kivitendo-import-v6.2
+          path: dist/*.zip
+          if-no-files-found: error

@@ -1,0 +1,98 @@
+[% USE HTML %]
+[% USE L %]
+[% USE P %]
+
+<h1>[% title | html %]</h1>
+
+<div class="wrapper">
+  <p>
+    Lieferant: <strong>[% vendor.name | html %]</strong>
+  </p>
+  <p>
+    Bitte kontrolliere jede Position. Ein vorausgewählter Namensvorschlag wird
+    erst gespeichert, wenn du dieses Formular bestätigst. Mehrdeutige Treffer
+    bleiben leer und müssen von dir ausgewählt werden.
+  </p>
+  <p>
+    Mit dem Speichern wird die Auswahl nur für diesen Lieferanten gelernt. Bestehende
+    Zuordnungen bleiben erhalten. Bei widersprüchlichen Zuordnungen wird abgebrochen;
+    bitte diese zuerst in den Artikelstammdaten prüfen.
+    Anschließend öffnet sich die Einkaufsrechnung weiterhin <strong>ungebucht</strong>.
+  </p>
+  <p>
+    Fehlt ein Artikel, kannst du ihn in einem neuen Browser-Tab
+    <a href="controller.pl?action=Part/add_part" target="_blank" rel="noopener">als Ware</a>
+    oder
+    <a href="controller.pl?action=Part/add_service" target="_blank" rel="noopener">als Dienstleistung</a>
+    anlegen. Danach hier im Artikelfeld danach suchen.
+  </p>
+</div>
+
+<form method="post" action="controller.pl" id="form">
+  [% L.hidden_tag('mapping_session_file', session_file) %]
+
+  <div class="wrapper">
+    <table class="tbl-list wi-wide">
+      <thead>
+        <tr>
+          <th>Pos.</th>
+          <th>Lieferanten-Art.-Nr.</th>
+          <th>Bezeichnung aus XML</th>
+          <th>Menge / Netto / Steuer</th>
+          <th>Kivitendo-Artikel</th>
+          <th>Erkennung und Vorschläge</th>
+        </tr>
+      </thead>
+      <tbody>
+      [% FOREACH row = rows %]
+        <tr class="listrow">
+          <td class="numeric">[% row.row %]</td>
+          <td>[% row.vendor_partno ? HTML.escape(row.vendor_partno) : '—' %]</td>
+          <td>[% row.description ? HTML.escape(row.description) : '—' %]</td>
+          <td>
+            [% HTML.escape(row.quantity) %] / [% HTML.escape(row.subtotal) %] /
+            [% HTML.escape(row.tax_rate) %] %
+          </td>
+          <td>
+            [% P.part.picker('mapping_part_id_' _ row.row,
+                             row.selected_part,
+                             part_type='part,service',
+                             status='active',
+                             class='wi-wider',
+                             "data-validate"='required',
+                             "data-title"='Kivitendo-Artikel') %]
+          </td>
+          <td>
+            <div><strong>[% row.method_label | html %]</strong></div>
+            [% IF row.mapping_error %]
+              <div class="red">[% row.mapping_error | html %]</div>
+            [% END %]
+            [% IF row.candidates.size %]
+              <details>
+                <summary>Ähnliche Artikel anzeigen</summary>
+                <ul>
+                [% FOREACH candidate = row.candidates %]
+                  <li>
+                    <a href="controller.pl?action=Part/edit&amp;part.id=[% HTML.url(candidate.part.id) %]"
+                       target="_blank" rel="noopener">
+                      [% candidate.part.partnumber | html %] – [% candidate.part.description | html %]
+                    </a>
+                    ([% candidate.score_text | html %])
+                  </li>
+                [% END %]
+                </ul>
+              </details>
+            [% END %]
+          </td>
+        </tr>
+      [% END %]
+      </tbody>
+    </table>
+  </div>
+
+  <div class="wrapper">
+    <button type="submit" name="action" value="ZUGFeRD/save_mapping">
+      Zuordnungen speichern und fortfahren
+    </button>
+  </div>
+</form>

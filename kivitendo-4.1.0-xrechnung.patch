@@ -1,0 +1,2121 @@
+--- /dev/null
++++ b/SL/PDFInvoice.pm
+@@ -0,0 +1,36 @@
++package SL::PDFInvoice;
++use strict;
++use warnings;
++use utf8;
++use JSON::PP ();
++use File::Temp qw(tempfile);
++use IPC::Run qw(run timeout);
++sub call_helper {
++  my ($mode, $input) = @_;
++  my ($out, $err) = ('', '');
++  my @cmd = ('python3', 'scripts/pdf_invoice_review.py', $mode);
++  my ($fh, $path);
++  my $stdin = '';
++  if ($mode eq 'analyze') {
++    ($fh, $path) = tempfile(SUFFIX => '.pdf', UNLINK => 1);
++    binmode $fh; print {$fh} $input; close $fh;
++    push @cmd, $path;
++  } else {
++    $stdin = JSON::PP->new->utf8->encode($input);
++  }
++  my $ok = run \@cmd, \$stdin, \$out, \$err, timeout(240);
++  my $result = eval { JSON::PP->new->utf8->decode($out) };
++  die "PDF-Auswertung fehlgeschlagen. Python 3, Poppler und ggf. Tesseract pruefen."
++    unless ref($result) eq 'HASH';
++  die $result->{error} if $result->{error};
++  die "PDF-Auswertung fehlgeschlagen." unless $ok;
++  return $result;
++}
++sub from_review {
++  my ($class, $data) = @_;
++  return bless $data, $class;
++}
++sub metadata { $_[0]->{metadata} }
++sub items { $_[0]->{items} }
++sub tax_totals { $_[0]->{tax_totals} }
++1;
+--- /dev/null
++++ b/scripts/pdf_invoice_review.py
+@@ -0,0 +1,131 @@
++#!/usr/bin/env python3
++"""Local PDF extraction and strict validation; no network, no automatic posting."""
++import sys,json,re,subprocess,tempfile,shutil,datetime
++from pathlib import Path
++from decimal import Decimal,ROUND_HALF_UP
++
++def run(args, timeout=45):
++    try:
++        p=subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=timeout)
++    except FileNotFoundError:
++        raise ValueError('Programm fehlt: '+args[0])
++    if p.returncode: raise ValueError('PDF-Verarbeitung fehlgeschlagen: '+args[0])
++    return p.stdout.decode('utf-8',errors='replace')
++
++def money(value):
++    s=str(value).strip().replace(' ','').replace('\u00a0','')
++    if ',' in s: s=s.replace('.','').replace(',','.')
++    if not re.fullmatch(r'-?\d+(?:\.\d{1,5})?',s): raise ValueError('Ungueltige Zahl: '+s[:40])
++    v=Decimal(s)
++    if not v.is_finite() or abs(v)>Decimal('1000000000'): raise ValueError('Zahl ausserhalb des erlaubten Bereichs')
++    return v
++
++def analyze(path):
++    if Path(path).stat().st_size>50*1024*1024: raise ValueError('PDF zu gross (maximal 50 MiB)')
++    info=run(['pdfinfo',path]);m=re.search(r'^Pages:\s+(\d+)',info,re.M)
++    if not m or not 1<=int(m[1])<=20: raise ValueError('PDF muss 1 bis 20 Seiten haben')
++    pages=int(m[1]);text=run(['pdftotext','-layout','-enc','UTF-8',path,'-'])
++    warnings=['Alle Angaben mit dem Original vergleichen. OCR und Texterkennung koennen Fehler enthalten.']
++    # Inspect every page so mixed digital/scanned documents do not lose pages silently.
++    chunks=text.split('\f');needs=[i for i in range(pages) if i>=len(chunks) or len(re.sub(r'\W','',chunks[i]))<30]
++    if needs:
++        if not shutil.which('tesseract') or not shutil.which('pdftoppm'):
++            warnings.append('OCR fehlt: mindestens eine Seite hat keinen lesbaren Text. Angaben manuell vervollstaendigen.')
++        else:
++            langs=run(['tesseract','--list-langs']);lang='+'.join(x for x in ('deu','eng') if x in langs.split())
++            if not lang: raise ValueError('Tesseract-Sprachdaten deu oder eng fehlen')
++            with tempfile.TemporaryDirectory(prefix='kivi-ocr-') as d:
++                while len(chunks)<pages: chunks.append('')
++                for i in needs:
++                    prefix=str(Path(d)/str(i))
++                    run(['pdftoppm','-f',str(i+1),'-l',str(i+1),'-singlefile','-scale-to','2400','-png',path,prefix])
++                    chunks[i]=run(['tesseract',prefix+'.png','stdout','-l',lang],60)
++            text='\n\f\n'.join(chunks[:pages]);warnings.append('OCR verwendet: Ziffern und Dezimalzeichen besonders pruefen.')
++    if len(text)>300000: raise ValueError('PDF-Text zu umfangreich')
++    result={'text':text,'warnings':warnings,'invnumber':'','transdate':'','currency':'','net_total':'','tax_total':'','gross_total':'','items_text':''}
++    def unique(key, values):
++        values=list(dict.fromkeys(values))
++        if len(values)==1:result[key]=values[0]
++        elif len(values)>1:warnings.append('Mehrdeutige Erkennung: '+key+'; bitte selbst eintragen.')
++    unique('ustid',re.findall(r'\bDE\s*(\d{9})\b',text))
++    if result.get('ustid'):result['ustid']='DE'+result['ustid']
++    unique('invnumber',re.findall(r'(?:Rechnungsnummer|Rechnungs[- ]?Nr\.?|Invoice\s*(?:number|no\.?))\s*:?\s*([A-Za-z0-9][A-Za-z0-9/._-]*)',text,re.I))
++    dates=re.findall(r'(?:Rechnungsdatum|Invoice date)\s*:?\s*(\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2})',text,re.I)
++    unique('transdate',dates)
++    currencies=re.findall(r'\b(?:EUR|USD|GBP|CHF)\b',text)
++    if '€' in text: currencies.append('EUR')
++    unique('currency',currencies)
++    amount=r'(-?\d[\d.,]*)\s*(?:EUR|USD|GBP|CHF|€)?\s*$'
++    patterns={'net_total':r'(?:Zwischensumme Netto|Nettobetrag|Gesamt netto|Net total)', 'tax_total':r'(?:Mehrwertsteuer|Umsatzsteuer|MwSt\.?|VAT total)', 'gross_total':r'(?:Zu zahlender Betrag|Rechnungsbetrag|Gesamtbetrag|Bruttobetrag|Grand total|Amount due)'}
++    for key,label in patterns.items():
++        found=[]
++        for line in text.splitlines():
++            if re.search(label,line,re.I):
++                m=re.search(amount,line)
++                if m:
++                    try:found.append(str(money(m[1])))
++                    except ValueError:pass
++        unique(key,found)
++    # Conservative line detection: explicit position, quantity, unit, net price, net total, VAT.
++    items=[]
++    for line in text.splitlines():
++        m=re.match(r'^\s*\d+\s{2,}(.+?)\s{2,}(\d+(?:[.,]\d+)?)\s+(?:Stk\.?|Stueck|pcs|h)\s{2,}([\d.,]+)\s{2,}([\d.,]+)\s{2,}([\d.,]+)\s*%\s*$',line)
++        if m:
++            desc,q,price,total,rate=m.groups()
++            try:
++                if abs(money(q)*money(price)-money(total))<=Decimal('.01'):
++                    items.append(' | '.join([desc,str(money(q)),str(money(total)),str(money(rate))]))
++            except ValueError:pass
++    if items: result['items_text']='\n'.join(items)
++    else:
++        rates=set(re.findall(r'(?:Mehrwertsteuer|MwSt\.?|Umsatzsteuer)[^\n\d]{0,8}(\d+(?:[.,]\d+)?)\s*%',text,re.I))
++        if result['net_total'] and len(rates)==1:
++            result['items_text']='Sammelposition laut Originalrechnung | 1 | '+result['net_total']+' | '+str(money(next(iter(rates))))
++            warnings.append('Nur Sammelposition vorgeschlagen: Einzelpositionen wurden nicht zuverlaessig erkannt. Bitte ersetzen oder bewusst bestaetigen.')
++        else:warnings.append('Positionen nicht sicher erkannt. Bitte aus dem Original eintragen.')
++    return result
++
++def validate(data):
++    if str(data.get('confirmed',''))!='1':raise ValueError('Originalvergleich muss bestaetigt werden')
++    if not re.fullmatch(r'[1-9]\d*',str(data.get('vendor_id',''))):raise ValueError('Lieferant muss ausgewaehlt werden')
++    number=str(data.get('invnumber','')).strip()
++    if not number or len(number)>100 or re.search(r'[\x00-\x1f]',number):raise ValueError('Rechnungsnummer fehlt oder ist ungueltig')
++    date=str(data.get('transdate','')).strip()
++    try:d=datetime.datetime.strptime(date,'%Y-%m-%d' if '-' in date else '%d.%m.%Y').date()
++    except ValueError:raise ValueError('Rechnungsdatum ungueltig (TT.MM.JJJJ)')
++    currency=str(data.get('currency','')).strip().upper()
++    if not re.fullmatch('[A-Z]{3}',currency):raise ValueError('Waehrung muss ein dreistelliger Code sein')
++    totals={k:money(data.get(k,'')) for k in ('net_total','tax_total','gross_total')}
++    if any(v<0 or v!=v.quantize(Decimal('.01')) for v in totals.values()):raise ValueError('Nur positive Rechnungen mit Cent-Betraegen; Gutschriften nicht unterstuetzt')
++    if abs(totals['net_total']+totals['tax_total']-totals['gross_total'])>Decimal('.001'):raise ValueError('Netto + Steuer stimmt nicht mit Brutto ueberein')
++    items=[]
++    for line in str(data.get('items_text','')).splitlines():
++        if not line.strip():continue
++        fields=[v.strip() for v in line.split('|')]
++        if len(fields)!=4:raise ValueError('Position: Bezeichnung | Menge | Netto-Gesamtbetrag | Steuer-% erwartet')
++        desc,q,total,rate=fields;q,total,rate=map(money,(q,total,rate))
++        if not desc or len(desc)>1000 or q<=0 or total<0 or rate not in (Decimal(0),Decimal(7),Decimal(19)):raise ValueError('Position ungueltig; unterstuetzt werden positive Mengen und 0, 7, 19 %')
++        if total!=total.quantize(Decimal('.01')):raise ValueError('Positionssumme muss ein Cent-Betrag sein')
++        items.append({'description':desc,'quantity':str(q),'subtotal':str(total),'tax_rate':str(rate),'vendor_partno':''})
++    if not 1<=len(items)<=100:raise ValueError('1 bis 100 Positionen erforderlich')
++    if abs(sum(money(i['subtotal']) for i in items)-totals['net_total'])>Decimal('.001'):raise ValueError('Positionssummen stimmen nicht mit Netto ueberein')
++    groups={}
++    for i in items:
++        rate=money(i['tax_rate']);groups[rate]=groups.get(rate,Decimal(0))+money(i['subtotal'])
++    rounded=lambda v:v.quantize(Decimal('.01'),rounding=ROUND_HALF_UP)
++    calculated=sum(rounded(net*rate/100) for rate,net in groups.items())
++    gross_match=False
++    if len(items)==1:
++        rate=money(items[0]['tax_rate'])/100
++        gross_match=rounded(totals['gross_total']*rate/(1+rate))==totals['tax_total']
++    if calculated!=totals['tax_total'] and not gross_match:
++        raise ValueError('Steuersumme passt nicht centgenau zu den Positionen; Rundung und Steuersaetze pruefen')
++    metadata={'type':'380','invnumber':number,'transdate':d.strftime('%Y%m%d'),'currency':currency,**{k:str(v) for k,v in totals.items()}}
++    return {'vendor_id':int(data['vendor_id']),'metadata':metadata,'items':items,'tax_totals':[{'category_code':'S' if money(i['tax_rate']) else 'Z','tax_rate':i['tax_rate'],'net_amount':i['subtotal']} for i in items]}
++
++if __name__=='__main__':
++    try:
++        result=analyze(sys.argv[2]) if sys.argv[1]=='analyze' else validate(json.load(sys.stdin))
++        print(json.dumps(result,ensure_ascii=True))
++    except Exception as e:
++        print(json.dumps({'error':str(e)},ensure_ascii=True));sys.exit(1)
+--- /dev/null
++++ b/templates/design40_webpages/zugferd/pdf_review.html
+@@ -0,0 +1,26 @@
++[% USE L %][% USE P %]
++<div class="wrapper">
++<h2>PDF-Rechnung: Angaben mit dem Original vergleichen</h2>
++<p>Die Erkennung ist ein Vorschlag. Bitte insbesondere Lieferant, Rechnungsnummer, Datum, Positionen und Summen pruefen. Keine automatische Buchung. Nur normale Rechnungen mit 0, 7 oder 19 %; keine Gutschriften oder Reverse-Charge-Faelle.</p>
++[% IF review_error %]<p class="message_error">[% review_error | html %]</p>[% END %]
++[% FOREACH warning = values.warnings %]<p><strong>[% warning | html %]</strong></p>[% END %]
++<form method="post" action="controller.pl" id="form">
++[% L.hidden_tag('pdf_session_file', session_file) %]
++<table>
++<tr><th>Lieferant (bewusst auswaehlen)</th><td>[% P.customer_vendor.picker('pdf_vendor_id', values.vendor_id, type='vendor') %]</td></tr>
++<tr><th>Rechnungsnummer</th><td>[% L.input_tag('pdf_invnumber', values.invnumber) %]</td></tr>
++<tr><th>Rechnungsdatum (TT.MM.JJJJ)</th><td>[% L.input_tag('pdf_transdate', values.transdate) %]</td></tr>
++<tr><th>Waehrung (z. B. EUR)</th><td>[% L.input_tag('pdf_currency', values.currency) %]</td></tr>
++<tr><th>Netto gesamt</th><td>[% L.input_tag('pdf_net_total', values.net_total) %]</td></tr>
++<tr><th>Steuer gesamt</th><td>[% L.input_tag('pdf_tax_total', values.tax_total) %]</td></tr>
++<tr><th>Brutto gesamt</th><td>[% L.input_tag('pdf_gross_total', values.gross_total) %]</td></tr>
++</table>
++<p>Eine Position pro Zeile: <strong>Bezeichnung | Menge | Netto-Gesamtbetrag | Steuer-%</strong><br>Beispiel: Webhosting | 1 | 10,00 | 19<br>Erkannte Sammelpositionen bei Bedarf durch Einzelpositionen ersetzen. Netto-Gesamtbetrag ist die Zeilensumme, kein Stueckpreis.</p>
++<textarea name="pdf_items_text" rows="10" cols="100">[% values.items_text | html %]</textarea>
++<p>[% L.checkbox_tag('pdf_confirmed', value=1, label='Ich habe Lieferant, Rechnungsdaten, Positionen und Summen mit der Original-PDF verglichen. Eine Sammelposition uebernehme ich gegebenenfalls bewusst.') %]</p>
++<button type="submit" name="action" value="ZUGFeRD/confirm_pdf">Gepruefte Daten uebernehmen und Artikel zuordnen</button>
++<a href="controller.pl?action=ZUGFeRD/upload_zugferd">Abbrechen</a>
++</form>
++<details><summary>Ausgelesener PDF-Text (kann unvollstaendig sein)</summary><pre>[% values.text | html %]</pre></details>
++<p>Die Original-PDF bitte in kivitendo am fertigen Beleg ablegen. Dieser Import ersetzt keine Originalrechnung.</p>
++</div>
+--- a/SL/Controller/ZUGFeRD.pm
++++ b/SL/Controller/ZUGFeRD.pm
+@@ -1,18 +1,28 @@
+ package SL::Controller::ZUGFeRD;
+ use strict;
+ use warnings;
++use utf8;
+ use parent qw(SL::Controller::Base);
+ 
+ use SL::DB::RecordTemplate;
++use SL::DB::MakeModel;
++use SL::DB::Manager::Part;
++use SL::DB::Part;
++use SL::DB::Vendor;
++use SL::Helper::Flash qw(flash flash_later);
++use Digest::SHA qw(sha256_hex);
++use Scalar::Util qw(looks_like_number);
+ use SL::Locale::String qw(t8);
+ use SL::Helper::DateTime;
+ use SL::XMLInvoice;
+ use SL::ZUGFeRD;
++use SL::PDFInvoice;
++use JSON::PP ();
+ use SL::SessionFile;
+ use SL::Helper::Number qw(_format_total);
+ 
+ use XML::LibXML;
+-use List::Util qw(first);
++use List::Util qw(first max);
+ 
+ 
+ __PACKAGE__->run_before('check_auth');
+@@ -28,42 +38,940 @@
+ sub action_import_zugferd {
+   my ($self, %params) = @_;
+ 
+-  my $file = $::form->{file};
++  my $file      = $::form->{file};
+   my $file_name = $::form->{file_name};
+-
+-  my %res; # result data structure returned by SL::ZUGFeRD->extract_from_{pdf,xml}()
+-
+-  die t8("missing file for action import")   unless $file;
+-  die t8("can only parse a pdf or xml file") unless $file =~ m/^%PDF|<\?xml/;
+-
+-  if ( $::form->{file} =~ m/^%PDF/ ) {
+-    %res = %{SL::ZUGFeRD->extract_from_pdf($file)};
++  my $import_as_purchase_invoice = $::form->{import_as_purchase_invoice};
++
++  if (!defined($file) || !length($file)) {
++    my $message = 'Bitte eine PDF- oder XML-Rechnungsdatei auswählen.';
++    flash_later('error', $message);
++    return $self->redirect_to(action => 'upload_zugferd');
++  }
++  $file_name = 'xrechnung-' . sha256_hex($file) . ($file =~ m/^%PDF-/ ? '.pdf' : '.xml');
++
++  my $res = eval { _extract_invoice_data($file) };
++  if (!$res && $file =~ /^%PDF-/) {
++    return $self->_review_plain_pdf($file_name, $file);
++  }
++  if (!$res) {
++    return $self->_redirect_import_error($@ || 'unbekannter Importfehler');
++  }
++
++  return $self->_review_plain_pdf($file_name, $file)
++    if $res->{pdf_vendor_id} && !$params{pdf_review_confirmed};
++  $import_as_purchase_invoice = 1 if $res->{pdf_vendor_id};
++  my $vendor = _find_invoice_vendor($res);
++  _check_invoice_duplicates($vendor->id, $res);
++
++  # Store the original file before an item mapping page is rendered. The file
++  # is reparsed after confirmation, so invoice values never have to be trusted
++  # from hidden browser fields.
++  _save_session_invoice($file_name, $file);
++
++  if (!$import_as_purchase_invoice) {
++    my $form_defaults = $self->build_ap_transaction_form_defaults($res);
++    return $self->_redirect_to_invoice_form('ap.pl', $form_defaults, $file_name);
++  }
++
++  $::auth->assert('vendor_invoice_edit');
++  _assert_valid_purchase_invoice_items($res);
++  my ($mapping_rows, $needs_mapping) = $self->_build_mapping_rows(
++    $vendor->id,
++    $res->{invoice_xml}->items,
++  );
++
++  if ($needs_mapping) {
++    $::auth->assert('part_service_assembly_edit');
++    return $self->_render_mapping_form(
++      vendor       => $vendor,
++      rows         => $mapping_rows,
++      session_file => $file_name,
++    );
++  }
++
++  my $form_defaults = $self->build_purchase_invoice_form_defaults(
++    $res,
++    vendor => $vendor,
++  );
++  return $self->_redirect_to_invoice_form('ir.pl', $form_defaults, $file_name);
++}
++
++sub _render_pdf_review {
++  my ($self, $name, $values, $error) = @_;
++  my $context_name = $name // '';
++  $context_name =~ s/\.pdf$/-review.json/;
++  my ($context) = eval { _load_session_invoice($context_name) };
++  if ($context) {
++    my $saved = eval { JSON::PP->new->utf8->decode($context) };
++    if (ref($saved) eq 'HASH') {
++      $values->{text} = $saved->{text};
++      $values->{warnings} = $saved->{warnings};
++    }
++  }
++  $self->render('zugferd/pdf_review', title => 'PDF-Rechnung pruefen',
++    session_file => $name, values => $values, review_error => $error);
++}
++
++sub _review_plain_pdf {
++  my ($self, $name, $file) = @_;
++  $::auth->assert('vendor_invoice_edit');
++  return $self->_redirect_import_error('PDF ist groesser als 50 MiB.') if length($file) > 50 * 1024 * 1024;
++  _save_session_invoice($name, $file);
++  my $values = eval { SL::PDFInvoice::call_helper('analyze', $file) };
++  return $self->_redirect_import_error($@) unless $values;
++  if ($values->{ustid}) {
++    my $vendor = eval { SL::ZUGFeRD::find_vendor($values->{ustid}, undef) };
++    $values->{vendor_id} = $vendor->id if $vendor;
++  }
++  my $context_name = $name;
++  $context_name =~ s/\.pdf$/-review.json/;
++  _save_session_invoice($context_name, JSON::PP->new->utf8->encode($values));
++  return $self->_render_pdf_review($name, $values, '');
++}
++
++sub action_confirm_pdf {
++  my ($self) = @_;
++  $::auth->assert('vendor_invoice_edit');
++  my $name = $::form->{pdf_session_file};
++  my %values = map { $_ => $::form->{"pdf_$_"} // '' } qw(vendor_id invnumber transdate currency net_total tax_total gross_total items_text confirmed);
++  my ($file, $approved);
++  my $ok = eval {
++    ($file) = _load_session_invoice($name);
++    die "Keine Original-PDF vorhanden." unless $file =~ /^%PDF-/;
++    $approved = SL::PDFInvoice::call_helper('validate', \%values);
++    my $vendor = SL::DB::Vendor->new(id => $approved->{vendor_id})->load;
++    die "Lieferant ist nicht verfuegbar." if $vendor->obsolete;
++    $approved->{pdf_sha256} = sha256_hex($file);
++    1;
++  };
++  return $self->_render_pdf_review($name, \%values, _clean_import_error($@)) unless $ok;
++  _save_session_invoice('xrechnung-' . sha256_hex($file) . '.json', JSON::PP->new->utf8->encode($approved));
++  local $::form->{file} = $file;
++  local $::form->{import_as_purchase_invoice} = 1;
++  return $self->action_import_zugferd(pdf_review_confirmed => 1);
++}
++
++sub _extract_invoice_data {
++  my ($file) = @_;
++  die "Keine Rechnungsdatei vorhanden." unless defined($file) && length($file);
++  die "Rechnungsdatei ist groesser als 50 MiB." if length($file) > 50 * 1024 * 1024;
++  my $res;
++  if ($file =~ /^%PDF-/) {
++    my $review_name = 'xrechnung-' . sha256_hex($file) . '.json';
++    my ($review) = eval { _load_session_invoice($review_name) };
++    if ($review) {
++      my $data = JSON::PP->new->utf8->decode($review);
++      die "PDF-Pruefdaten passen nicht zur Originaldatei." unless ($data->{pdf_sha256} // '') eq sha256_hex($file);
++      return { result => SL::ZUGFeRD::RES_OK(), invoice_xml => SL::PDFInvoice->from_review($data), pdf_vendor_id => $data->{vendor_id} };
++    }
++    $res = SL::ZUGFeRD->extract_from_pdf($file);
+   } else {
+-    %res = %{SL::ZUGFeRD->extract_from_xml($file)};
+-  }
+-
+-  if ($res{'result'} != SL::ZUGFeRD::RES_OK()) {
+-    # An error occurred; log message from parser:
+-    die(t8("Could not extract Factur-X/ZUGFeRD data, data and error message:") . " $res{'message'}");
+-  }
+-
+-  my $form_defaults = $self->build_ap_transaction_form_defaults(\%res);
+-
+-  # save the zugferd file to session file for reuse in ap.pl
++    # Accept XML with/without declaration and UTF-8 BOM; reject DTDs.
++    my $doc = XML::LibXML->load_xml(string => $file, no_network => 1,
++      load_ext_dtd => 0, expand_entities => 0, recover => 0);
++    die "XML mit DTD wird nicht importiert." if $doc->internalSubset || $doc->externalSubset;
++    $res = SL::ZUGFeRD->extract_from_xml($file);
++  }
++  die "Keine unterstuetzte Rechnungs-XML gefunden. Fuer normale PDFs ist die Pruefung der erkannten Daten erforderlich."
++    unless ref($res) eq 'HASH' && defined($res->{result}) && $res->{result} == SL::ZUGFeRD::RES_OK();
++  return $res;
++}
++
++sub _canonical_invoice_number {
++  my ($number) = @_;
++  # Ignore case and whitespace only. Preserve punctuation and leading zeros.
++  $number = lc(_trim_value($number));
++  $number =~ s/\s+//g;
++  return $number;
++}
++
++sub _duplicate_findings {
++  my ($metadata, $rows) = @_;
++  my (@exact, @similar);
++  my $key = _canonical_invoice_number($metadata->{invnumber});
++  die "Rechnungsnummer fehlt; Import abgebrochen." unless length($key);
++  my $date = $metadata->{transdate} // '';
++  $date =~ s/^(\d{4})(\d{2})(\d{2})$/$1-$2-$3/;
++  foreach my $row (@$rows) {
++    if (_canonical_invoice_number($row->{invnumber}) eq $key) {
++      push @exact, $row;
++    } elsif ($date ne '' && $date eq ($row->{transdate} // '')
++             && ($metadata->{currency} // '') eq ($row->{currency} // '')
++             && looks_like_number($metadata->{gross_total})
++             && looks_like_number($row->{amount})
++             && abs($metadata->{gross_total} - $row->{amount}) < 0.005) {
++      push @similar, $row;
++    }
++  }
++  return (\@exact, \@similar);
++}
++
++sub _check_invoice_duplicates {
++  my ($vendor_id, $data) = @_;
++  my $dbh = SL::DB->client->dbh;
++  my $rows = $dbh->selectall_arrayref(
++    'SELECT a.id, a.invnumber, a.transdate, '
++    . 'CASE WHEN a.currency_id = (SELECT currency_id FROM defaults LIMIT 1) THEN a.amount ELSE NULL END AS amount, c.name AS currency '
++    . 'FROM ap a LEFT JOIN currencies c ON c.id = a.currency_id WHERE a.vendor_id = ?',
++    { Slice => {} }, $vendor_id);
++  my ($exact, $similar) = _duplicate_findings($data->{invoice_xml}->metadata, $rows);
++  die "Moegliche Rechnungs-Dublette: Lieferant und Rechnungsnummer bereits vorhanden (Beleg-ID: "
++    . join(', ', map { $_->{id} } @$exact) . "). Import abgebrochen; bestehenden Beleg pruefen."
++    if @$exact;
++  return '' unless @$similar;
++  return "DUBLETTENVERDACHT: gleicher Lieferant, Rechnungsdatum, Bruttobetrag und Waehrung, aber andere Rechnungsnummer (Beleg-ID: "
++    . join(', ', map { $_->{id} } @$similar) . "). Vor dem Buchen pruefen.";
++}
++
++sub _clean_import_error {
++  my ($error) = @_;
++
++  $error //= '';
++  $error =~ s/[\r\n]+/ /g;
++  $error =~ s/^\s+|\s+$//g;
++  $error =~ s/\s+at\s+\S+\s+line\s+\d+\.?$//;
++  $error = 'unbekannter Importfehler' if $error eq '';
++  return substr($error, 0, 800);
++}
++
++sub _redirect_import_error {
++  my ($self, $error) = @_;
++
++  flash_later('error', 'Rechnungsimport nicht möglich: ' . _clean_import_error($error));
++  return $self->redirect_to(action => 'upload_zugferd');
++}
++
++sub _save_session_invoice {
++  my ($file_name, $file) = @_;
++
+   my $session_file = SL::SessionFile->new($file_name, mode => 'w');
++  die "XRechnungsdatei konnte nicht in der Sitzung gespeichert werden."
++    unless $session_file->fh;
+   $session_file->fh->print($file);
+   $session_file->fh->close;
++}
++
++sub _load_session_invoice {
++  my ($file_name) = @_;
++
++  die "Sitzungsdatei fuer die XRechnung fehlt." unless _trim_value($file_name) ne '';
++  die "Ungueltige Import-Sitzungsdatei." unless $file_name =~ /^xrechnung-[a-f0-9]{64}(?:-review)?\.(?:xml|pdf|json)$/;
++  my $session_file = SL::SessionFile->new($file_name, mode => '<');
++  die "Die XRechnungsdatei ist nicht mehr in der Sitzung vorhanden. Bitte erneut hochladen."
++    unless $session_file->fh;
++
++  local $/;
++  my $file = readline($session_file->fh);
++  $session_file->fh->close;
++  return ($file, $session_file);
++}
++
++sub _find_invoice_vendor {
++  my ($data) = @_;
++
++  if ($data->{pdf_vendor_id}) {
++    my $vendor = SL::DB::Vendor->new(id => $data->{pdf_vendor_id})->load;
++    die "Lieferant ist nicht verfuegbar." if $vendor->obsolete;
++    return $vendor;
++  }
++  my %metadata = %{ $data->{invoice_xml}->metadata };
++  die t8("Cannot process this invoice: neither VAT ID nor tax ID present.")
++    unless $metadata{ustid} || $metadata{taxnumber};
++
++  my $vendor = SL::ZUGFeRD::find_vendor($metadata{ustid}, $metadata{taxnumber});
++  die t8(
++    "Vendor with VAT ID (#1) and/or tax ID (#2) not found. Please check if the vendor #3 exists and whether it has the correct tax ID/VAT ID.",
++    $metadata{ustid},
++    $metadata{taxnumber},
++    $metadata{vendor_name},
++  ) unless $vendor;
++
++  return $vendor;
++}
++
++sub _is_decimal {
++  return defined($_[0]) && $_[0] =~ /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/;
++}
++
++sub _assert_valid_purchase_invoice_items {
++  my ($data) = @_;
++
++  my $parser   = $data->{invoice_xml};
++  my %metadata = %{ $parser->metadata };
++  my @items    = @{ $parser->items || [] };
++
++  die "Artikelbasierter Import unterstuetzt derzeit nur Rechnungen (TypeCode 380)."
++    unless ($metadata{type} // '') eq '380';
++  die "Die XRechnung enthaelt keine Rechnungspositionen." unless @items;
++
++  my @errors;
++  my $line_sum = 0;
++  foreach my $tax (@{ $parser->tax_totals || [] }) {
++    push @errors, "Steuerkategorie wird im Artikelimport nicht unterstuetzt."
++      unless ($tax->{category_code} // '') =~ /^(?:S|Z|E)$/;
++  }
++  foreach my $index (0 .. $#items) {
++    my $row   = $index + 1;
++    my $label = _trim_value($items[$index]->{vendor_partno})
++             || _trim_value($items[$index]->{description})
++             || "Position $row";
++
++    push @errors, "Position $row ($label): ungueltige oder leere Menge"
++      if !_is_decimal($items[$index]->{quantity}) || $items[$index]->{quantity} == 0;
++    push @errors, "Position $row ($label): ungueltige Positionssumme"
++      if !_is_decimal($items[$index]->{subtotal});
++    push @errors, "Position $row ($label): ungueltiger Steuersatz"
++      if !_is_decimal($items[$index]->{tax_rate}) || $items[$index]->{tax_rate} < 0 || $items[$index]->{tax_rate} > 100;
++    $line_sum += $items[$index]->{subtotal} if _is_decimal($items[$index]->{subtotal});
++  }
++
++  push @errors, "Positionssummen stimmen nicht mit dem Netto-Gesamtbetrag ueberein. Belegweite Zu-/Abschlaege werden nicht automatisch verteilt."
++    if !_is_decimal($metadata{net_total}) || abs($line_sum - $metadata{net_total}) > 0.01;
++  push @errors, "Brutto-, Netto- und Steuerbetrag sind nicht konsistent."
++    if !_is_decimal($metadata{gross_total}) || !_is_decimal($metadata{tax_total})
++       || abs($metadata{gross_total} - $metadata{net_total} - $metadata{tax_total}) > 0.01;
++
++  die "Artikelbasierter XRechnungsimport abgebrochen; ungueltige Rechnungspositionen:\n- "
++    . join("\n- ", @errors) if @errors;
++}
++
++sub _redirect_to_invoice_form {
++  my ($self, $controller, $form_defaults, $file_name) = @_;
++
++  my $res = _extract_invoice_data((_load_session_invoice($file_name))[0]);
++  my $warning = _check_invoice_duplicates($form_defaults->{vendor_id}, $res);
++  if ($warning) {
++    $form_defaults->{intnotes} .= "\n" . $warning;
++    flash_later("warning", $warning);
++  }
+   $form_defaults->{zugferd_session_file} = $file_name;
+-
+-  $form_defaults->{callback} = $self->url_for(action => 'upload_zugferd');
+-
+-  $self->redirect_to(
+-    controller    => 'ap.pl',
++  $form_defaults->{callback}             = $self->url_for(action => 'upload_zugferd');
++
++  return $self->redirect_to(
++    controller    => $controller,
+     action        => 'load_zugferd',
+     form_defaults => $form_defaults,
+   );
+ }
+ 
++sub _trim_value {
++  my ($value) = @_;
++
++  $value //= '';
++  $value =~ s/^\s+|\s+$//g;
++  return $value;
++}
++
++sub _normalized_name {
++  my ($value) = @_;
++
++  $value = lc(_trim_value($value));
++  $value =~ s/ä/ae/g;
++  $value =~ s/ö/oe/g;
++  $value =~ s/ü/ue/g;
++  $value =~ s/ß/ss/g;
++  $value =~ s/[^\p{L}\p{N}]+/ /g;
++  $value =~ s/\s+/ /g;
++  return _trim_value($value);
++}
++
++sub _ilike_exact_pattern {
++  my ($value) = @_;
++
++  $value = _trim_value($value);
++  $value =~ s/([\\%_])/\\$1/g;
++  return $value;
++}
++
++sub _part_mapping_error {
++  my ($part, $lookup_value) = @_;
++
++  return "zugeordneter Artikel '$lookup_value' ist deaktiviert"
++    if $part->obsolete;
++  return "zugeordneter Artikel '$lookup_value' ist keine Ware/Dienstleistung"
++    unless (($part->part_type // '') eq 'part') || (($part->part_type // '') eq 'service');
++  return "zugeordneter Artikel '$lookup_value' ist nicht fuer den Einkauf freigegeben"
++    if !$part->classification || !$part->classification->used_for_purchase;
++  return undef;
++}
++
++sub _parts_for_mappings {
++  my ($mappings) = @_;
++
++  my %parts_by_id;
++  foreach my $mapping (@{ $mappings || [] }) {
++    next unless $mapping->parts_id;
++    $parts_by_id{ $mapping->parts_id } ||= SL::DB::Manager::Part->find_by(
++      id => $mapping->parts_id,
++    );
++  }
++  return grep { $_ } values %parts_by_id;
++}
++
++sub _candidate_list_text {
++  my (@parts) = @_;
++
++  return join(', ', map {
++    my @status;
++    push @status, 'deaktiviert' if $_->obsolete;
++    push @status, 'keine Ware/Dienstleistung'
++      unless (($_->part_type // '') eq 'part') || (($_->part_type // '') eq 'service');
++    push @status, 'nicht fuer Einkauf freigegeben'
++      if !$_->classification || !$_->classification->used_for_purchase;
++
++    ($_->partnumber // '?') . " - " . ($_->description // '')
++      . (@status ? ' [' . join(', ', @status) . ']' : '')
++  } sort {
++    ($a->partnumber // '') cmp ($b->partnumber // '')
++  } @parts);
++}
++
++sub _find_part_for_xml_item {
++  my ($vendor_id, $item) = @_;
++
++  my $vendor_partno = _trim_value($item->{vendor_partno});
++  my $description   = _trim_value($item->{description});
++
++  if ($vendor_partno ne '') {
++    my $mappings = SL::DB::Manager::MakeModel->get_all(
++      where => [ make => $vendor_id ],
++    );
++    $mappings = [ grep {
++      _same_text_ci($_->model, $vendor_partno)
++    } @{ $mappings } ];
++    my @mapped_parts = _parts_for_mappings($mappings);
++    my @valid_parts  = grep { !_part_mapping_error($_, $vendor_partno) } @mapped_parts;
++
++    if (@mapped_parts > 1) {
++      my $preferred_part = @valid_parts == 1 ? $valid_parts[0] : undef;
++      return ($preferred_part, 'conflict',
++        "mehrere Zuordnungen fuer Lieferanten-Art-Nr. '$vendor_partno' gefunden: "
++        . _candidate_list_text(@mapped_parts));
++    }
++    return ($valid_parts[0], 'supplier_number', undef)
++      if @valid_parts == 1;
++
++    if (@mapped_parts) {
++      return (undef, undef, _part_mapping_error($mapped_parts[0], $vendor_partno)
++        || "Lieferanten-Art-Nr. '$vendor_partno' zeigt auf keine verwendbare Ware/Dienstleistung");
++    }
++    return (undef, undef,
++      "Lieferanten-Art-Nr. '$vendor_partno' zeigt auf einen nicht mehr vorhandenen Artikel")
++      if @{ $mappings };
++  }
++
++  if ($description ne '') {
++    # A saved, supplier-specific description wins over a global article name.
++    # This lets generic lines such as shipping be learned per supplier.
++    my $description_mappings = SL::DB::Manager::MakeModel->get_all(where => [ make => $vendor_id ]);
++    $description_mappings = [ grep {
++         _same_text_ci($_->model, $description)
++      || _same_text_ci($_->part_description, $description)
++    } @{ $description_mappings } ];
++    my @all_supplier_parts = _parts_for_mappings($description_mappings);
++    my @supplier_parts = grep {
++      !_part_mapping_error($_, $description)
++    } @all_supplier_parts;
++
++    if (@all_supplier_parts > 1) {
++      my $preferred_part = @supplier_parts == 1 ? $supplier_parts[0] : undef;
++      return ($preferred_part, 'conflict',
++        "mehrere Lieferanten-Zuordnungen fuer Bezeichnung '$description' gefunden: "
++        . _candidate_list_text(@all_supplier_parts));
++    }
++    return ($supplier_parts[0], 'supplier_description', undef)
++      if @supplier_parts == 1;
++
++    my $invalid_supplier_mapping = @all_supplier_parts
++      ? "vorhandene Lieferanten-Zuordnung fuer Bezeichnung '$description' ist unbrauchbar: "
++        . _candidate_list_text(@all_supplier_parts)
++      : @{ $description_mappings }
++      ? "vorhandene Lieferanten-Zuordnung fuer Bezeichnung '$description' zeigt auf einen nicht mehr vorhandenen Artikel"
++      : undef;
++
++    my $local_name_matches = SL::DB::Manager::Part->get_all(
++      where => [ description => { ilike => _ilike_exact_pattern($description) } ],
++    );
++    my @local_parts = grep {
++         _same_text_ci($_->description, $description)
++      && !_part_mapping_error($_, $description)
++    } @{ $local_name_matches };
++
++    return (undef, undef, "mehrere aktive Artikel fuer Bezeichnung '$description' gefunden: "
++      . _candidate_list_text(@local_parts)) if @local_parts > 1;
++    return ($local_parts[0], 'local_description', $invalid_supplier_mapping)
++      if @local_parts == 1;
++
++    return (undef, undef, $invalid_supplier_mapping)
++      if $invalid_supplier_mapping;
++
++    my $number_hint = $vendor_partno ne ''
++                    ? "Lieferanten-Art-Nr. '$vendor_partno' und "
++                    : '';
++    return (undef, undef, "keine Zuordnung fuer ${number_hint}Bezeichnung '$description' gefunden");
++  }
++
++  return (undef, undef, 'weder Lieferantenartikelnummer noch Bezeichnung vorhanden')
++    if $vendor_partno eq '';
++  return (undef, undef, "keine Zuordnung fuer Lieferanten-Art-Nr. '$vendor_partno' gefunden");
++}
++
++sub _mapping_tokens {
++  my ($value) = @_;
++
++  my %stopword = map { $_ => 1 } qw(
++    der die das den dem ein eine einer eines und mit fuer von im in am zum zur
++    stueck stck stk pack packung
++  );
++  my %tokens;
++  foreach my $token (split /\s+/, _normalized_name($value)) {
++    next if !$token || $stopword{$token} || $token =~ /^\d+er$/;
++    $token = 'versand' if $token =~ /^(?:dhl|paket|porto|fracht|versand|versandkosten)$/;
++    $tokens{$token} = 1;
++  }
++  return \%tokens;
++}
++
++sub _name_similarity {
++  my ($left, $right) = @_;
++
++  my $left_tokens  = _mapping_tokens($left);
++  my $right_tokens = _mapping_tokens($right);
++  my $left_count   = scalar keys %{ $left_tokens };
++  my $right_count  = scalar keys %{ $right_tokens };
++  return 0 unless $left_count && $right_count;
++
++  my $intersection = scalar grep { $right_tokens->{$_} } keys %{ $left_tokens };
++  return 0 unless $intersection;
++
++  my $score = 0.35 * ($intersection / $left_count)
++            + 0.55 * ($intersection / $right_count);
++  my $left_normalized  = _normalized_name($left);
++  my $right_normalized = _normalized_name($right);
++  $score += 0.10 if index($left_normalized, $right_normalized) >= 0
++                    || index($right_normalized, $left_normalized) >= 0;
++  return $score > 1 ? 1 : $score;
++}
++
++sub _active_purchase_parts {
++  my ($self) = @_;
++
++  return $self->{_zugferd_active_purchase_parts}
++    if $self->{_zugferd_active_purchase_parts};
++
++  my $parts = SL::DB::Manager::Part->get_all(where => [
++    or => [ obsolete => undef, obsolete => 0 ],
++  ], with_objects => [ 'classification' ]);
++  $self->{_zugferd_active_purchase_parts} = [ grep {
++    !_part_mapping_error($_, $_->partnumber // '')
++  } @{ $parts } ];
++  return $self->{_zugferd_active_purchase_parts};
++}
++
++sub _suggest_parts {
++  my ($self, $description) = @_;
++
++  my @candidates = sort {
++       $b->{score} <=> $a->{score}
++    || ($a->{part}->partnumber // '') cmp ($b->{part}->partnumber // '')
++  } grep {
++    $_->{score} >= 0.20
++  } map {
++    +{ part => $_, score => _name_similarity($description, $_->description) }
++  } @{ $self->_active_purchase_parts };
++
++  splice @candidates, 5 if @candidates > 5;
++  $_->{score_text} = sprintf('%.0f %%', $_->{score} * 100) for @candidates;
++
++  my $suggested_part;
++  if (@candidates && $candidates[0]->{score} >= 0.78) {
++    my $distance = @candidates > 1
++                 ? $candidates[0]->{score} - $candidates[1]->{score}
++                 : 1;
++    $suggested_part = $candidates[0]->{part} if $distance >= 0.15;
++  }
++
++  return (\@candidates, $suggested_part);
++}
++
++sub _mapping_method_label {
++  my ($method) = @_;
++
++  return 'Gespeicherte Lieferanten-Art.-Nr.'         if ($method // '') eq 'supplier_number';
++  return 'Gespeicherte Lieferantenbezeichnung'       if ($method // '') eq 'supplier_description';
++  return 'Exakter Kivitendo-Artikelname; noch nicht gespeichert'
++                                                       if ($method // '') eq 'local_description';
++  return 'Automatischer Namensvorschlag; bitte pruefen' if ($method // '') eq 'suggestion';
++  return 'Widerspruechliche Zuordnung; bitte bestaetigen' if ($method // '') eq 'conflict';
++  return 'Noch nicht zugeordnet';
++}
++
++sub _build_mapping_rows {
++  my ($self, $vendor_id, $items) = @_;
++
++  my @rows;
++  my $needs_mapping = 0;
++  my $row = 0;
++  foreach my $item_ref (@{ $items || [] }) {
++    $row++;
++    my %item = %{ $item_ref };
++    my ($part, $method, $mapping_error) = _find_part_for_xml_item($vendor_id, \%item);
++    my $vendor_partno = _trim_value($item{vendor_partno});
++    my ($candidates, $suggested_part) = ([], undef);
++
++    my $row_needs_mapping = !!$mapping_error
++                         || ($method // '') ne 'supplier_number'
++                         || ($vendor_partno ne '' && ($method // '') ne 'supplier_number');
++
++    if ($mapping_error && !$part) {
++      ($candidates, $suggested_part) = $self->_suggest_parts($item{description});
++      if ($suggested_part) {
++        $part   = $suggested_part;
++        $method = 'suggestion';
++      }
++    }
++
++    $needs_mapping ||= $row_needs_mapping;
++    push @rows, {
++      row             => $row,
++      vendor_partno   => $vendor_partno,
++      description     => _trim_value($item{description}),
++      quantity        => $item{quantity},
++      subtotal        => $item{subtotal},
++      tax_rate        => $item{tax_rate},
++      selected_part   => $part,
++      method           => $method,
++      method_label     => _mapping_method_label($method),
++      mapping_error    => $mapping_error,
++      candidates       => $candidates,
++      requires_mapping => $row_needs_mapping,
++    };
++  }
++
++  return (\@rows, $needs_mapping);
++}
++
++sub _render_mapping_form {
++  my ($self, %params) = @_;
++
++  my $selected_parts = $params{selected_parts} || {};
++  foreach my $row (@{ $params{rows} || [] }) {
++    $row->{selected_part} = $selected_parts->{ $row->{row} }
++      if $selected_parts->{ $row->{row} };
++  }
++
++  $self->setup_mapping_action_bar;
++  return $self->render(
++    'zugferd/mapping',
++    title        => 'XRechnung: Artikel zuordnen',
++    vendor       => $params{vendor},
++    rows         => $params{rows},
++    session_file => $params{session_file},
++  );
++}
++
++sub _same_text_ci {
++  my ($left, $right) = @_;
++  return lc(_trim_value($left)) eq lc(_trim_value($right));
++}
++
++sub _supplier_key {
++  my ($item) = @_;
++  my $number = _trim_value($item->{vendor_partno});
++  return ($number ne '' ? 'number:' . lc($number) : 'name:' . lc(_trim_value($item->{description})));
++}
++
++sub _store_supplier_mapping {
++  my ($vendor_id, $part, $item) = @_;
++  my $number = _trim_value($item->{vendor_partno});
++  my $description = _trim_value($item->{description});
++  die "Lieferantenschluessel fehlt." if $number eq '' && $description eq '';
++  # Called under a table lock inside the mapping transaction. Do not delete or
++  # overwrite prices, descriptions or another article's existing supplier key.
++  my $rows = SL::DB::Manager::MakeModel->get_all(where => [ make => $vendor_id ]);
++  my @matching = grep {
++    $number ne '' ? _same_text_ci($_->model, $number)
++                 : _same_text_ci($_->part_description, $description)
++                   || _same_text_ci($_->model, $description)
++  } @$rows;
++  die "Bestehende Lieferanten-Zuordnung widerspricht der Auswahl. Bitte Artikelstammdaten pruefen."
++    if grep { !$_->parts_id || $_->parts_id != $part->id } @matching;
++  return if @matching; # Idempotent; preserve existing rows, including prices.
++  my $last = max(0, map { $_->sortorder || 0 } grep { $_->parts_id == $part->id } @$rows);
++  SL::DB::MakeModel->new(
++    parts_id => $part->id, make => $vendor_id, model => $number,
++    part_description => $description, sortorder => $last + 1,
++  )->save;
++  if (!$part->makemodel) {
++    $part->makemodel(1);
++    $part->save(changes_only => 1);
++  }
++}
++
++sub action_save_mapping {
++  my ($self) = @_;
++
++  $::auth->assert('vendor_invoice_edit');
++  $::auth->assert('part_service_assembly_edit');
++
++  my $file_name = $::form->{mapping_session_file};
++  my ($file, $res);
++  my $loaded = eval {
++    ($file) = _load_session_invoice($file_name);
++    $res    = _extract_invoice_data($file);
++    1;
++  };
++  return $self->_redirect_import_error($@ || 'Sitzungsdatei konnte nicht gelesen werden')
++    unless $loaded;
++  my $vendor     = _find_invoice_vendor($res);
++  _check_invoice_duplicates($vendor->id, $res);
++  _assert_valid_purchase_invoice_items($res);
++  my @items      = @{ $res->{invoice_xml}->items };
++
++  my (@selected_parts, %selected_by_row, @errors);
++  foreach my $index (0 .. $#items) {
++    my $row     = $index + 1;
++    my $part_id = $::form->{"mapping_part_id_$row"};
++    $part_id = undef unless defined($part_id) && $part_id =~ /^[1-9][0-9]*$/;
++    my $label   = _trim_value($items[$index]->{vendor_partno})
++               || _trim_value($items[$index]->{description})
++               || "Position $row";
++
++    if (_trim_value($items[$index]->{vendor_partno}) eq ''
++        && _trim_value($items[$index]->{description}) eq '') {
++      push @errors, "Position $row: Lieferanten-Art.-Nr. und Bezeichnung fehlen; eine dauerhafte Zuordnung ist nicht moeglich.";
++      next;
++    }
++
++    if (!$part_id) {
++      push @errors, "Position $row ($label): Bitte einen Kivitendo-Artikel auswaehlen.";
++      next;
++    }
++
++    my $part = SL::DB::Manager::Part->find_by(id => $part_id);
++    if (!$part) {
++      push @errors, "Position $row ($label): Der ausgewaehlte Artikel existiert nicht.";
++      next;
++    }
++
++    my $part_error = _part_mapping_error($part, $part->partnumber // $part_id);
++    if ($part_error) {
++      push @errors, "Position $row ($label): $part_error";
++      next;
++    }
++
++    $selected_parts[$index] = $part;
++    $selected_by_row{$row}  = $part;
++  }
++
++  my %targets;
++  foreach my $index (0 .. $#items) {
++    next unless $selected_parts[$index];
++    my $key = _supplier_key($items[$index]);
++    my $id = $selected_parts[$index]->id;
++    push @errors, "Derselbe Lieferantenschluessel wurde verschiedenen Artikeln zugeordnet."
++      if exists($targets{$key}) && $targets{$key} != $id;
++    $targets{$key} = $id;
++  }
++
++  if (@errors) {
++    flash('error', @errors);
++    my ($rows) = $self->_build_mapping_rows($vendor->id, \@items);
++    return $self->_render_mapping_form(
++      vendor         => $vendor,
++      rows           => $rows,
++      session_file   => $file_name,
++      selected_parts => \%selected_by_row,
++    );
++  }
++
++  my $db = $selected_parts[0]->db;
++  my $form_defaults;
++  my $ok = $db->with_transaction(sub {
++    $db->dbh->do("LOCK TABLE makemodel IN SHARE ROW EXCLUSIVE MODE");
++    foreach my $index (0 .. $#items) {
++      _store_supplier_mapping($vendor->id, $selected_parts[$index], $items[$index]);
++    }
++    $form_defaults = $self->build_purchase_invoice_form_defaults($res, vendor => $vendor);
++    return 1;
++  });
++  die "Lieferanten-Zuordnungen konnten nicht gespeichert werden: " . ($db->error // '')
++    unless $ok;
++
++  my $message = 'Die bestaetigten Lieferanten-Zuordnungen wurden gespeichert.';
++  flash_later('ok', $message);
++  return $self->_redirect_to_invoice_form('ir.pl', $form_defaults, $file_name);
++}
++
++sub _purchase_invoice_uses_gross_prices {
++  my ($parser) = @_;
++  my @items = @{ $parser->items };
++  return 0 unless @items == 1;
++  my $metadata = $parser->metadata;
++  my $rate = $items[0]->{tax_rate} / 100;
++  my $net = $metadata->{net_total};
++  my $tax = $metadata->{tax_total};
++  my $gross = $metadata->{gross_total};
++  return 0 if abs($::form->round_amount($net * $rate, 2) - $tax) < 0.005;
++
++  # A single invoice line can be represented exactly as a gross-price line.
++  # Reproduce IR.pm's gross tax calculation, not a guessed rounding adjustment.
++  my $gross_tax = $::form->round_amount($gross * $rate / (1 + $rate), 2);
++  die "Rechnungssummen lassen sich weder mit Netto- noch mit Bruttopreisen exakt darstellen."
++    if abs($gross_tax - $tax) >= 0.005
++    || abs($::form->round_amount($gross - $gross_tax, 2) - $net) >= 0.005;
++  return 1;
++}
++
++sub build_purchase_invoice_form_defaults {
++  my ($self, $data, %params) = @_;
++  _assert_valid_purchase_invoice_items($data);
++
++  my $parser       = $data->{invoice_xml};
++  my %metadata     = %{ $parser->metadata };
++  my @items        = @{ $parser->items };
++  my $use_gross_prices = _purchase_invoice_uses_gross_prices($parser);
++  my $form_defaults = $self->build_ap_transaction_form_defaults($data, %params);
++
++  die "Die XRechnung enthaelt keine Rechnungspositionen." unless @items;
++
++  die "Artikelbasierter Import unterstuetzt derzeit nur Rechnungen (TypeCode 380)."
++    unless ($metadata{type} // '') eq '380';
++
++  my @mapping_errors;
++  my @mapping_notes;
++  my %item_form;
++  my $row = 0;
++
++  foreach my $item_ref (@items) {
++    $row++;
++    my %item = %{ $item_ref };
++    my $label = _trim_value($item{vendor_partno}) || _trim_value($item{description}) || "Position $row";
++
++    if (!looks_like_number($item{quantity}) || !$item{quantity}) {
++      push @mapping_errors, "Position $row ($label): ungueltige oder leere Menge";
++      next;
++    }
++    if (!looks_like_number($item{subtotal})) {
++      push @mapping_errors, "Position $row ($label): ungueltige Positionssumme";
++      next;
++    }
++    if (!looks_like_number($item{tax_rate})) {
++      push @mapping_errors, "Position $row ($label): ungueltiger Steuersatz";
++      next;
++    }
++
++    my ($part, $mapping_method, $mapping_error) =
++      _find_part_for_xml_item($form_defaults->{vendor_id}, \%item);
++
++    if ($mapping_error) {
++      push @mapping_errors, "Position $row ($label): $mapping_error";
++      next;
++    }
++
++    my $quantity     = $item{quantity} * 1;
++    my $line_total   = ($use_gross_prices ? $metadata{gross_total} : $item{subtotal}) * 1;
++    my $price_factor = ($part->price_factor_id && $part->price_factor)
++                     ? $part->price_factor->factor
++                     : 1;
++    my $unit_price   = $line_total * $price_factor / $quantity;
++    die "Brutto-Einzelpreis kann mit der verwendeten Menge/Preiseinheit nicht centgenau dargestellt werden."
++      if $use_gross_prices
++      && abs($::form->round_amount($::form->round_amount($unit_price, 5) * $quantity / $price_factor, 2) - $line_total) >= 0.005;
++    my $tax_rate     = $item{tax_rate} * 1;
++       $tax_rate    /= 100; # XML Percent is always a percentage, including 0.5 and 1.
++
++    $item_form{"id_${row}"}                     = $part->id;
++    $item_form{"partnumber_${row}"}             = $part->partnumber;
++    $item_form{"description_${row}"}            = _trim_value($item{description}) || $part->description;
++    $item_form{"qty_${row}"}                    = $::form->format_amount(\%::myconfig, $quantity, 5);
++    $item_form{"sellprice_${row}"}              = $::form->format_amount(\%::myconfig, $unit_price, 5);
++    $item_form{"discount_${row}"}               = $::form->format_amount(\%::myconfig, 0, 2);
++    $item_form{"unit_${row}"}                   = $part->unit;
++    $item_form{"part_type_${row}"}              = $part->part_type;
++    $item_form{"price_factor_id_${row}"}         = $part->price_factor_id;
++    $item_form{"_zugferd_tax_rate_${row}"}       = $tax_rate;
++    my $xml_description = _trim_value($item{description});
++    my $mapped_by_description = ($mapping_method // '') ne 'supplier_number';
++    my $mapping_status  = ($mapping_method // '') eq 'supplier_description'
++                        ? 'Gespeicherte Lieferantenbezeichnung'
++                        : $mapped_by_description
++                        ? 'NAMENSSUCHE - bitte pruefen'
++                        : _normalized_name($xml_description) ne _normalized_name($part->description)
++                        ? 'LIEFERANTEN-ART-NR.; Bezeichnungen weichen ab - bitte pruefen'
++                        : 'Lieferanten-Art-Nr.';
++
++    $item_form{"_zugferd_mapping_info_${row}"}   = sprintf(
++      "Position %d: XML '%s'%s => Kivitendo %s - %s [%s]",
++      $row,
++      $xml_description || '(ohne Bezeichnung)',
++      _trim_value($item{vendor_partno}) ne '' ? " / " . _trim_value($item{vendor_partno}) : '',
++      $part->partnumber // '?',
++      $part->description // '',
++      $mapping_status,
++    );
++
++    if ($mapped_by_description) {
++      my $reason = _trim_value($item{vendor_partno}) ne ''
++                 ? "Lieferanten-Art-Nr. '" . _trim_value($item{vendor_partno}) . "' war nicht zugeordnet"
++                 : 'Lieferanten-Art-Nr. fehlte';
++      push @mapping_notes,
++        "Position $row wurde ueber die exakte Bezeichnung '"
++        . _trim_value($item{description}) . "' zugeordnet ($reason).";
++    }
++  }
++
++  if (@mapping_errors) {
++    die "Artikelbasierter XRechnungsimport abgebrochen. Bitte zuerst die Lieferantenpreise/"
++      . "Lieferanten-Art-Nr. in den Artikelstammdaten korrigieren:\n- "
++      . join("\n- ", @mapping_errors);
++  }
++
++  # Remove the amount rows created for the standard AP transaction import.
++  delete $form_defaults->{$_} for grep {
++    /^(?:AP_amount_chart_id_|previous_AP_amount_chart_id_|amount_|taxchart_)/
++  } keys %{ $form_defaults };
++
++  my $invdate = delete $form_defaults->{transdate};
++  delete @{ $form_defaults }{qw(no_payment_bookings paid_1_suggestion)};
++
++  $form_defaults->{intnotes} .= "\n" . join("\n", @mapping_notes) if @mapping_notes;
++  $form_defaults->{intnotes} .= "\nMengeneinheiten: XML-Mengen werden in der lokalen Artikeleinheit verwendet. Keine automatische Gebindeumrechnung; vor dem Buchen pruefen.";
++  $form_defaults->{intnotes} .= $use_gross_prices
++    ? "\nBruttopreis automatisch aus Original-Gesamtbetrag uebernommen; Steuer im Preis inbegriffen. Original-Netto-, Steuer- und Bruttosumme wurden rechnerisch abgeglichen."
++    : "\nNetto-Einzelpreise wurden fuer den Import aus Positionssumme / Menge berechnet.";
++
++  return {
++    %{ $form_defaults },
++    %item_form,
++    invdate                 => $invdate,
++    rowcount                => $row,
++    paidaccounts            => 1,
++    type                    => 'purchase_invoice',
++    taxincluded             => $use_gross_prices ? 1 : 0,
++    transaction_description => 'XRechnung ' . ($metadata{invnumber} // ''),
++  };
++}
++
++sub setup_mapping_action_bar {
++  my ($self) = @_;
++
++  for my $bar ($::request->layout->get('actionbar')) {
++    $bar->add(
++      action => [
++        'Zuordnungen speichern und fortfahren',
++        submit    => [ '#form', { action => 'ZUGFeRD/save_mapping' } ],
++        checks    => [ 'kivi.validate_form' ],
++        accesskey => 'enter',
++      ],
++      link => [
++        'Abbrechen',
++        link => $self->url_for(action => 'upload_zugferd'),
++      ],
++    );
++  }
++}
++
+ sub build_ap_transaction_form_defaults {
+   my ($self, $data, %params) = @_;
+   my $vendor = $params{vendor};
+@@ -74,6 +982,7 @@
+   my @items = @{$parser->items};
+ 
+   my $intnotes = t8("ZUGFeRD Import. Type: #1", $metadata{'type'})->translated;
++  $intnotes .= "\nPDF-Texterkennung: Werte vom Benutzer anhand des Originals bestaetigt. Original-PDF separat am Beleg ablegen; keine elektronische Originalrechnung." if $data->{pdf_vendor_id};
+   my $iban = $metadata{'iban'};
+   my $invnumber = $metadata{'invnumber'};
+ 
+--- a/SL/XMLInvoice/UBL.pm
++++ b/SL/XMLInvoice/UBL.pm
+@@ -5,8 +5,8 @@
+ 
+ use parent qw(SL::XMLInvoice::Base);
+ 
+-use constant ITEMS_XPATH => '//cac:InvoiceLine';
+-use constant TAX_TOTALS_XPATH => '//cac:TaxTotal/cac:TaxSubtotal';
++use constant ITEMS_XPATH => '/ubl:Invoice/cac:InvoiceLine';
++use constant TAX_TOTALS_XPATH => '/ubl:Invoice/cac:TaxTotal[cbc:TaxAmount/@currencyID = /ubl:Invoice/cbc:DocumentCurrencyCode]/cac:TaxSubtotal';
+ 
+ =head1 NAME
+ 
+@@ -77,19 +77,19 @@
+ # XML XPath expressions for scalar metadata
+ sub scalar_xpaths {
+   return {
+-    currency => '//cbc:DocumentCurrencyCode',
+-    direct_debit => '//cbc:PaymentMeansCode[@listID="UN/ECE 4461"]',
+-    duedate => '//cbc:DueDate',
+-    gross_total => '//cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount',
+-    iban => '//cac:PayeeFinancialAccount/cbc:ID',
+-    invnumber => '//cbc:ID',
+-    net_total => '//cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount',
+-    tax_total => '//cac:TaxTotal/cbc:TaxAmount',
+-    transdate => '//cbc:IssueDate',
+-    type => '//cbc:InvoiceTypeCode',
+-    taxnumber => '//cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme/cbc:CompanyID',
+-    ustid => '//cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme/cbc:CompanyID',
+-    vendor_name => '//cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name',
++    currency => '/ubl:Invoice/cbc:DocumentCurrencyCode',
++    direct_debit => '(/ubl:Invoice/cac:PaymentMeans/cbc:PaymentMeansCode)[1]',
++    duedate => '/ubl:Invoice/cbc:DueDate',
++    gross_total => '/ubl:Invoice/cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount',
++    iban => '(/ubl:Invoice/cac:PaymentMeans/cac:PayeeFinancialAccount/cbc:ID)[1]',
++    invnumber => '/ubl:Invoice/cbc:ID',
++    net_total => '/ubl:Invoice/cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount',
++    tax_total => '(/ubl:Invoice/cac:TaxTotal/cbc:TaxAmount[@currencyID = /ubl:Invoice/cbc:DocumentCurrencyCode])[1]',
++    transdate => '/ubl:Invoice/cbc:IssueDate',
++    type => '/ubl:Invoice/cbc:InvoiceTypeCode',
++    taxnumber => '(/ubl:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme[cac:TaxScheme/cbc:ID != "VAT"]/cbc:CompanyID)[1]',
++    ustid => '(/ubl:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyTaxScheme[cac:TaxScheme/cbc:ID = "VAT"]/cbc:CompanyID)[1]',
++    vendor_name => '(/ubl:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyName/cbc:Name | /ubl:Invoice/cac:AccountingSupplierParty/cac:Party/cac:PartyLegalEntity/cbc:RegistrationName)[1]',
+   };
+ }
+ 
+@@ -98,7 +98,7 @@
+   return {
+     'currency' => './cbc:LineExtensionAmount[attribute::currencyID]',
+     'price' => './cac:Price/cbc:PriceAmount',
+-    'description' => './cac:Item/cbc:Description',
++    'description' => './cac:Item/cbc:Name | ./cac:Item/cbc:Description[not(../cbc:Name)]',
+     'quantity' => './cbc:InvoicedQuantity',
+     'subtotal' => './cbc:LineExtensionAmount',
+     'tax_rate' => './/cac:ClassifiedTaxCategory/cbc:Percent',
+@@ -137,6 +137,7 @@
+ 
+ sub _xpath_context {
+   my $xc = XML::LibXML::XPathContext->new;
++  $xc->registerNs(ubl => 'urn:oasis:names:specification:ubl:schema:xsd:Invoice-2');
+   $xc->registerNs(cac => 'urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2');
+   $xc->registerNs(cec => 'urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2');
+   $xc->registerNs(cbc => 'urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2');
+@@ -190,20 +191,6 @@
+   # See https://service.unece.org/trade/untdid/d16b/tred/tred4461.htm for other valid codes.
+   if (${$self->{_metadata}}{'direct_debit'}) {
+     ${$self->{_metadata}}{'direct_debit'} = ${$self->{_metadata}}{'direct_debit'} == 59 ? 1 : 0;
+-  }
+-
+-  # UBL does not have a specified way of designating the tax scheme, so we'll
+-  # have to guess whether it's a tax ID or VAT ID (not using
+-  # SL::VATIDNr->validate here to keep this code portable):
+-
+-  if ( ${$self->{_metadata}}{'ustid'} =~ qr"/" ) {
+-      # Unset this since the 'taxid' key has been retrieved with the same xpath
+-      # expression.
+-      ${$self->{_metadata}}{'ustid'} = undef;
+-  } else {
+-      # Unset this since the 'ustid' key has been retrieved with the same xpath
+-      # expression.
+-      ${$self->{_metadata}}{'taxnumber'} = undef;
+   }
+ 
+   my @items;
+--- a/bin/mozilla/ir.pl
++++ b/bin/mozilla/ir.pl
+@@ -33,7 +33,7 @@
+ #======================================================================
+ 
+ use SL::FU;
+-use SL::Helper::Flash qw(flash_later);
++use SL::Helper::Flash qw(flash flash_later);
+ use SL::Helper::UserPreferences::DisplayPreferences;
+ use SL::IR;
+ use SL::IS;
+@@ -49,7 +49,7 @@
+ use SL::DB::Tax;
+ use SL::DB::Chart;
+ use List::MoreUtils qw(uniq);
+-use List::Util qw(max sum);
++use List::Util qw(first max sum);
+ use List::UtilsBy qw(sort_by);
+ 
+ require "bin/mozilla/io.pl";
+@@ -99,6 +99,77 @@
+   &invoice_links;
+   &prepare_invoice;
+   &display_form;
++
++  $main::lxdebug->leave_sub();
++}
++
++sub load_zugferd {
++  $main::lxdebug->enter_sub();
++
++  $main::auth->assert('vendor_invoice_edit');
++
++  my $form_defaults = delete $::form->{form_defaults};
++  die "Keine Formulardaten fuer den artikelbasierten XRechnungsimport vorhanden."
++    unless ref($form_defaults) eq 'HASH';
++
++  my $file_name = $form_defaults->{zugferd_session_file};
++  flash('info', $::locale->text(
++    "The ZUGFeRD/Factur-X invoice '#1' has been loaded.", $file_name
++  )) if $file_name;
++
++  # invoice_links needs the vendor first. It loads account, tax-zone and vendor
++  # defaults; afterwards the values originating from the XML are restored.
++  $::form->{vendor_id} = $form_defaults->{vendor_id};
++  $::form->{invdate}   = $form_defaults->{invdate};
++  invoice_links();
++  $::form->{$_} = $form_defaults->{$_} for keys %{ $form_defaults };
++
++  my @mapping_messages;
++  for my $i (1 .. ($::form->{rowcount} || 0)) {
++    my $message = delete $::form->{"_zugferd_mapping_info_$i"};
++    push @mapping_messages, $message if $message;
++  }
++  flash(
++    'warning',
++    'Artikelzuordnung aus der XRechnung vor dem Buchen kontrollieren:',
++    @mapping_messages,
++  ) if @mapping_messages;
++
++  $::form->{show_details} = $::myconfig{show_form_details};
++  $::form->{title}        = $::locale->text('Record Vendor Invoice');
++  $::form->{form_validity_token} ||= SL::DB::ValidityToken->create(
++    scope => SL::DB::ValidityToken::SCOPE_PURCHASE_INVOICE_POST()
++  )->token;
++
++  prepare_invoice();
++  relink_accounts();
++
++  for my $i (1 .. $::form->{rowcount}) {
++    my $wanted_rate = delete $::form->{"_zugferd_tax_rate_$i"};
++    next unless defined $wanted_rate;
++
++    my $tax_chart_type = ($::form->{"part_type_$i"} eq 'part')
++                      && ($::instance_conf->get_inventory_system eq 'perpetual')
++                       ? 'inventory'
++                       : 'expense';
++    my $chart_id = $::form->{"${tax_chart_type}_accno_id_$i"};
++
++    $::form->error("Position $i: Fuer den zugeordneten Artikel ist kein passendes Buchungskonto vorhanden.")
++      unless $chart_id;
++
++    my @taxes = IO->get_active_taxes_for_chart($chart_id, $::form->{invdate});
++    my $tax   = first { abs(($_->rate // 0) - $wanted_rate) < 0.000001 } @taxes;
++
++    $::form->error(
++      "Position $i: Der Steuersatz aus der XML (" . ($wanted_rate * 100)
++      . " %) ist fuer das Artikelkonto nicht eingerichtet."
++    ) unless $tax;
++
++    $::form->{"tax_chart_type_$i"} = $tax_chart_type;
++    $::form->{"tax_id_$i"}         = $tax->id;
++  }
++
++  display_form();
+ 
+   $main::lxdebug->leave_sub();
+ }
+--- a/templates/design40_webpages/zugferd/form.html
++++ b/templates/design40_webpages/zugferd/form.html
+@@ -7,9 +7,11 @@
+ 
+   <p>[% "Import a Factur-X/ZUGFeRD file:" | $T8 %]</p>
+ 
++  <p>Normale PDFs werden lokal ausgelesen und vor dem Import zur Pruefung angezeigt. Scans benoetigen Tesseract. Maximal 20 Seiten / 50 MiB.</p>
+   <form method="post" action="controller.pl" enctype="multipart/form-data" id="form">
+-    [% L.input_tag('file', '', type => 'file', accept => '.pdf', onchange='kivi.ZUGFeRD.update_file_name();') %]
++    [% L.input_tag('file', '', type => 'file', accept => '.pdf,.xml', onchange='kivi.ZUGFeRD.update_file_name();') %]
+     [% L.hidden_tag('file_name', '') %]
++    <p>[% L.checkbox_tag('import_as_purchase_invoice', value=1, checked=1, label='Als Einkaufsrechnung mit Artikelpositionen importieren') %]</p>
+   </form>
+ 
+ </div>
+--- /dev/null
++++ b/templates/design40_webpages/zugferd/mapping.html
+@@ -0,0 +1,98 @@
++[% USE HTML %]
++[% USE L %]
++[% USE P %]
++
++<h1>[% title | html %]</h1>
++
++<div class="wrapper">
++  <p>
++    Lieferant: <strong>[% vendor.name | html %]</strong>
++  </p>
++  <p>
++    Bitte kontrolliere jede Position. Ein vorausgewählter Namensvorschlag wird
++    erst gespeichert, wenn du dieses Formular bestätigst. Mehrdeutige Treffer
++    bleiben leer und müssen von dir ausgewählt werden.
++  </p>
++  <p>
++    Mit dem Speichern wird die Auswahl nur für diesen Lieferanten gelernt. Bestehende
++    Zuordnungen bleiben erhalten. Bei widersprüchlichen Zuordnungen wird abgebrochen;
++    bitte diese zuerst in den Artikelstammdaten prüfen.
++    Anschließend öffnet sich die Einkaufsrechnung weiterhin <strong>ungebucht</strong>.
++  </p>
++  <p>
++    Fehlt ein Artikel, kannst du ihn in einem neuen Browser-Tab
++    <a href="controller.pl?action=Part/add_part" target="_blank" rel="noopener">als Ware</a>
++    oder
++    <a href="controller.pl?action=Part/add_service" target="_blank" rel="noopener">als Dienstleistung</a>
++    anlegen. Danach hier im Artikelfeld danach suchen.
++  </p>
++</div>
++
++<form method="post" action="controller.pl" id="form">
++  [% L.hidden_tag('mapping_session_file', session_file) %]
++
++  <div class="wrapper">
++    <table class="tbl-list wi-wide">
++      <thead>
++        <tr>
++          <th>Pos.</th>
++          <th>Lieferanten-Art.-Nr.</th>
++          <th>Bezeichnung aus XML</th>
++          <th>Menge / Netto / Steuer</th>
++          <th>Kivitendo-Artikel</th>
++          <th>Erkennung und Vorschläge</th>
++        </tr>
++      </thead>
++      <tbody>
++      [% FOREACH row = rows %]
++        <tr class="listrow">
++          <td class="numeric">[% row.row %]</td>
++          <td>[% row.vendor_partno ? HTML.escape(row.vendor_partno) : '—' %]</td>
++          <td>[% row.description ? HTML.escape(row.description) : '—' %]</td>
++          <td>
++            [% HTML.escape(row.quantity) %] / [% HTML.escape(row.subtotal) %] /
++            [% HTML.escape(row.tax_rate) %] %
++          </td>
++          <td>
++            [% P.part.picker('mapping_part_id_' _ row.row,
++                             row.selected_part,
++                             part_type='part,service',
++                             status='active',
++                             class='wi-wider',
++                             "data-validate"='required',
++                             "data-title"='Kivitendo-Artikel') %]
++          </td>
++          <td>
++            <div><strong>[% row.method_label | html %]</strong></div>
++            [% IF row.mapping_error %]
++              <div class="red">[% row.mapping_error | html %]</div>
++            [% END %]
++            [% IF row.candidates.size %]
++              <details>
++                <summary>Ähnliche Artikel anzeigen</summary>
++                <ul>
++                [% FOREACH candidate = row.candidates %]
++                  <li>
++                    <a href="controller.pl?action=Part/edit&amp;part.id=[% HTML.url(candidate.part.id) %]"
++                       target="_blank" rel="noopener">
++                      [% candidate.part.partnumber | html %] – [% candidate.part.description | html %]
++                    </a>
++                    ([% candidate.score_text | html %])
++                  </li>
++                [% END %]
++                </ul>
++              </details>
++            [% END %]
++          </td>
++        </tr>
++      [% END %]
++      </tbody>
++    </table>
++  </div>
++
++  <div class="wrapper">
++    <button type="submit" name="action" value="ZUGFeRD/save_mapping">
++      Zuordnungen speichern und fortfahren
++    </button>
++  </div>
++</form>
+--- /dev/null
++++ b/scripts/sales_report_import.py
+@@ -0,0 +1,174 @@
++#!/usr/bin/env python3
++"""Local, strict vending sales report reader. Never posts accounting records."""
++import csv
++import calendar
++import hashlib
++import io
++import json
++import re
++import subprocess
++import sys
++from collections import defaultdict
++from datetime import datetime
++from decimal import Decimal, InvalidOperation
++from pathlib import Path
++
++def number(value):
++    value = str(value).strip().replace('€', '').replace(' ', '')
++    if ',' in value:
++        value = value.replace('.', '').replace(',', '.')
++    if not re.fullmatch(r'\d+(?:\.\d+)?', value):
++        raise ValueError('Ungueltige Zahl: ' + value[:60])
++    result = Decimal(value)
++    if not result.is_finite() or result > 100000000:
++        raise ValueError('Zahl ausserhalb des erlaubten Bereichs.')
++    return result
++
++def rate(value):
++    value = str(value).strip()
++    result = number(value.replace('%', ''))
++    if '%' not in value and result in (Decimal('.07'), Decimal('.19')):
++        result *= 100
++    if result not in (0, 7, 19):
++        raise ValueError('Nicht unterstuetzter Steuersatz: ' + value)
++    return int(result)
++
++def payment(value):
++    value = value.strip()
++    if value in ('PaymentTypeEnum.CASH', 'CASH', 'Bar'):
++        return 'CASH'
++    if value in ('PaymentTypeEnum.CASHLESS', 'CASHLESS', 'Bargeldlos'):
++        return 'CASHLESS'
++    raise ValueError('Unbekannte Zahlungsart: ' + value[:80])
++
++def item(year, month, product, pay, tax, qty, total):
++    year, month = str(year or '').strip(), str(month or '').strip()
++    if not year:
++        raise ValueError('Jahr fehlt. Bitte im Importformular das Jahr vierstellig eingeben (z. B. 2026) und die Datei erneut auswaehlen.')
++    if not re.fullmatch(r'\d{4}', year) or not 2000 <= int(year) <= 2100:
++        raise ValueError('Jahr ungueltig. Erwartet wird eine vierstellige Jahreszahl von 2000 bis 2100.')
++    if not month:
++        raise ValueError('Monat fehlt in der Datei. Bitte die Spalte Monat mit einer Zahl von 1 bis 12 fuellen.')
++    if not re.fullmatch(r'\d{1,2}', month) or not 1 <= int(month) <= 12:
++        raise ValueError('Monat ungueltig. Erwartet wird eine Zahl von 1 bis 12 in der Datei.')
++    year, month = int(year), int(month)
++    product = product.strip()
++    if not product or len(product) > 500 or any(ord(c) < 32 for c in product):
++        raise ValueError('Artikelbezeichnung fehlt oder ist ungueltig.')
++    qty, total = number(qty), number(total)
++    if qty <= 0 or qty != qty.to_integral() or total != total.quantize(Decimal('.01')):
++        raise ValueError('Erwartet werden positive ganze Stueckzahlen und centgenaue Umsaetze.')
++    return dict(year=year, month=month, product=product, payment=payment(pay),
++                tax_rate=rate(tax), quantity=qty, total=total)
++
++def csv_rows(text, year):
++    lines = text.lstrip('\ufeff').splitlines()
++    # Reports may start with an export timestamp and emoji headers.
++    start = next((i for i,l in enumerate(lines) if ';' in l and
++                  (('Produkt' in l and 'Verkäufe' in l) or ('Zeitpunkt' in l and 'Rechnungsnummer' in l))), None)
++    if start is None:
++        raise ValueError('CSV-Kopfzeile fehlt. Erwartet: Produkt, Zahlungsart, Steuersatz, Verkaeufe und Summe €.')
++    reader = csv.DictReader(lines[start:], delimiter=';')
++    reader.fieldnames = [re.sub(r'^[^A-Za-zÄÖÜäöüß]+', '', s).strip() for s in reader.fieldnames]
++    result, warnings, seen = [], [], set()
++    full = 'Zeitpunkt' in reader.fieldnames
++    for line,r in enumerate(reader, start+2):
++        if not any(r.values()):
++            continue
++        if None in r or any(v is None for v in r.values()):
++            raise ValueError(f'CSV-Zeile {line}: falsche Spaltenzahl.')
++        try:
++            if not full:
++                result.append(item((r.get('Jahr') or '').strip() or year, r['Monat'], r['Produkt'],
++                                   r['Zahlungsart'], r['Steuersatz'], r['Verkäufe'], r['Summe €']))
++                continue
++            if 'abgebrochen' in r['Zahlungsarten'].lower() and r['Preis'].strip() == '-':
++                warnings.append(f"Abgebrochener Verkauf ausgelassen: {r['Rechnungsnummer']}")
++                continue
++            if r['Status'].lower() != 'abgeschlossen':
++                raise ValueError('Nicht abgeschlossener Verkauf.')
++            stamp = datetime.strptime(r['Zeitpunkt'], '%d.%m.%Y %H:%M')
++            key = (r.get('Maschine',''), r['Rechnungsnummer'])
++            if key in seen:
++                raise ValueError('Mehrfach vorkommende Rechnungsnummer zuerst klaeren: ' + key[1])
++            seen.add(key)
++            match = re.fullmatch(r'(.+?)\s*\((\d+)x\)', r['Artikel'])
++            if not match:
++                raise ValueError('Artikelmenge nicht eindeutig.')
++            pays = re.findall(r'(Bar|GIROCARD|VISA|MASTERCARD|MAESTRO|VPAY|V PAY|AMEX|AMERICAN_EXPRESS)\s*\(',r['Zahlungsarten'],re.I)
++            if len(pays) != 1:
++                raise ValueError('Gemischte oder unbekannte Zahlungsart.')
++            row=item(stamp.year,stamp.month,match[1],'Bar' if pays[0].lower()=='bar' else 'Bargeldlos',
++                     r['Steuersatz'],match[2],r['Preis'])
++            row['machine']=r.get('Maschine','').strip()
++            result.append(row)
++        except (ValueError, KeyError, TypeError) as e:
++            raise ValueError(f'CSV-Zeile {line}: {e}') from e
++    machines={r.get('machine') for r in result if r.get('machine')}
++    if len(machines)>1:
++        raise ValueError('Bitte pro Standort eine Datei hochladen.')
++    return result,warnings
++
++def pdf_rows(path, year):
++    info=subprocess.run(['pdfinfo',str(path)],capture_output=True,text=True,timeout=30,check=True).stdout
++    pages=re.search(r'^Pages:\s+(\d+)',info,re.M)
++    if not pages or int(pages[1])>30:
++        raise ValueError('PDF: maximal 30 Seiten.')
++    text=subprocess.run(['pdftotext','-layout',str(path),'-'],capture_output=True,text=True,timeout=45,check=True).stdout
++    if len(text)>1000000:
++        raise ValueError('PDF-Text ist zu gross.')
++    rows=[]
++    # Compact reports generated from this workflow have a period/payment heading.
++    months=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember']
++    period=re.search(r'Verkaufsbericht\s+('+'|'.join(months)+r')\s+(20\d{2})',text)
++    pay=re.search(r'Zahlungsart:.*?PaymentTypeEnum\.(CASHLESS|CASH)',text)
++    for line in text.splitlines():
++        line=line.strip()
++        if not line or line.startswith(('Column1','Jahr','Monat','Produkt','Verkaufsbericht','Zahlungsart:','Quelle:','Verkaufsübersicht','Gesamt')):
++            continue
++        if 'PaymentTypeEnum.' in line:
++            m=re.fullmatch(r'(?:(20\d{2})\s+)?(\d{1,2})\s+(.+?)\s+PaymentTypeEnum\.(CASHLESS|CASH)\s+(\d+(?:[.,]\d+)?\s*%?)\s+([\d.,]+)\s+([\d.,]+)',line)
++            if not m:
++                raise ValueError('PDF-Zeile nicht eindeutig lesbar: '+line[:100])
++            y,mo,name,p,t,q,a=m.groups()
++            rows.append(item(y or year,mo,name,p,t,q,a))
++        elif period and pay:
++            m=re.fullmatch(r'(.+?)\s+(\d+)\s*%\s+([\d.,]+)\s+([\d.,]+)',line)
++            if m:
++                name,t,q,a=m.groups(); rows.append(item(period[2],months.index(period[1])+1,name,pay[1],t+'%',q,a))
++            else:
++                raise ValueError('PDF-Zeile nicht eindeutig lesbar: '+line[:100])
++        else:
++            raise ValueError('PDF-Layout nicht unterstuetzt. Alle Spalten zusammen exportieren oder Original-CSV verwenden.')
++    return rows,[]
++
++def analyze(path, year=''):
++    path=Path(path)
++    if path.stat().st_size>50*1024*1024:
++        raise ValueError('Datei groesser als 50 MiB.')
++    raw=path.read_bytes()
++    rows,warnings=pdf_rows(path,year) if raw.startswith(b'%PDF') else csv_rows(raw.decode('utf-8-sig'),year)
++    if not rows or len(rows)>50000:
++        raise ValueError('Keine Positionen oder mehr als 50000 Zeilen.')
++    groups={}
++    for r in rows:
++        key=(r['year'],r['month'],r['payment'])
++        group=groups.setdefault(key,{})
++        rowkey=(r['product'],r['tax_rate'])
++        value=group.setdefault(rowkey,[Decimal(0),Decimal(0)])
++        value[0]+=r['quantity'];value[1]+=r['total']
++    output=[]
++    for (y,m,p),data in sorted(groups.items()):
++        items=[dict(description=n,tax_rate=t,quantity=str(int(q)),total=str(a.quantize(Decimal('.01')))) for (n,t),(q,a) in sorted(data.items())]
++        if len(items)>500: raise ValueError('Mehr als 500 Artikel pro Monatsrechnung.')
++        group=dict(year=y,month=m,payment=p,items=items,total=str(sum((v[1] for v in data.values()),Decimal(0)).quantize(Decimal('.01'))),quantity=str(int(sum(v[0] for v in data.values()))),
++                   start_date=f'{y}-{m:02}-01',end_date=f'{y}-{m:02}-{calendar.monthrange(y,m)[1]}')
++        group['content_hash']=hashlib.sha256(json.dumps(group,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
++        output.append(group)
++    return dict(groups=output,warnings=warnings,sha256=hashlib.sha256(raw).hexdigest())
++
++if __name__=='__main__':
++    try:
++        print(json.dumps(analyze(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else ''),ensure_ascii=False))
++    except Exception as e:
++        print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)
+--- /dev/null
++++ b/SL/SalesReport.pm
+@@ -0,0 +1,146 @@
++package SL::SalesReport;
++use strict;
++use warnings;
++use utf8;
++use JSON::PP ();
++use Digest::SHA qw(sha256_hex);
++use Encode qw(encode);
++use File::Temp qw(tempfile);
++use IPC::Run qw(run timeout);
++use SL::DB;
++use SL::DB::Part;
++use DateTime;
++use SL::Helper::DateTime;
++
++sub json { JSON::PP->new->canonical }
++sub version { sha256_hex($_[0]->{content_hash} . $_[0]->{mapping}) }
++sub dbh { SL::DB->client->dbh }
++sub analyze {
++  my ($bytes, $year) = @_;
++  $year //= ''; $year =~ s/^\s+|\s+$//g;
++  die "Bitte eine Datei bis 50 MiB auswaehlen." unless length($bytes // '') && length($bytes) <= 50*1024*1024;
++  die "Jahr bitte vierstellig angeben." if length($year // '') && $year !~ /^20\d\d$/;
++  my ($fh,$path)=tempfile(UNLINK=>1); binmode $fh; print {$fh} $bytes; close $fh;
++  my ($out,$err,$stdin)=('','',''); my @cmd=('python3','scripts/sales_report_import.py',$path,$year // '');
++  my $ok=run \@cmd, \$stdin, \$out, \$err, timeout(100);
++  my $data=eval { JSON::PP->new->utf8->decode($out) };
++  die "Verkaufsbericht konnte nicht gelesen werden. Python 3 und Poppler pruefen." unless ref($data) eq 'HASH';
++  die "$data->{error}\n" if $data->{error};
++  die "Auswertung fehlgeschlagen." unless $ok && ref($data->{groups}) eq 'ARRAY';
++  return $data;
++}
++sub load_import {
++  my ($key, $dbh, $lock)=@_; $dbh ||= dbh();
++  die "Ungueltiger Import." unless ($key // '') =~ /^[a-f0-9]{64}$/;
++  my $row=$dbh->selectrow_hashref('SELECT * FROM sales_report_imports WHERE import_key = ?'.($lock ? ' FOR UPDATE' : ''),undef,$key);
++  die "Importvorgang nicht gefunden." unless $row;
++  $row->{data}=json()->decode($row->{payload});
++  $row->{mapped}=json()->decode($row->{mapping});
++  return $row;
++}
++sub store_imports {
++  my ($data,$source,$filename,$replace_open)=@_;
++  $source =~ s/^\s+|\s+$//g;
++  die "Bitte einen festen Standort/Quellnamen mit maximal 120 Zeichen angeben." unless length($source) && length($source)<=120 && $source !~ /[\x00-\x1f]/;
++  my @keys;
++  my $ok=SL::DB->client->with_transaction(sub {
++    my $dbh=dbh();
++    for my $g (@{$data->{groups}}) {
++      my $period=sprintf('%04d-%02d',$g->{year},$g->{month});
++      my $key=sha256_hex(encode('UTF-8',json()->encode([$source,$period,$g->{payment}])));
++      $dbh->do('INSERT INTO sales_report_imports (import_key,source,period,payment,content_hash,payload,source_sha256,filename) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (import_key) DO NOTHING',undef,
++        $key,$source,$period,$g->{payment},$g->{content_hash},json()->encode($g),$data->{sha256},substr($filename // 'Verkaufsbericht',0,250));
++      my $existing=load_import($key,$dbh,1);
++      if ($existing->{content_hash} ne $g->{content_hash}) {
++        die "Fuer $source / $period / $g->{payment} liegt bereits ein anderer Bericht vor. Gebuchte Berichte koennen nicht ersetzt werden; offene nur mit ausdruecklicher Auswahl. Nichts importiert."
++          if $existing->{posted_ar_id} || !$replace_open;
++        $dbh->do("UPDATE sales_report_imports SET payload=?,content_hash=?,mapping='{}',source_sha256=?,filename=? WHERE import_key=?",undef,
++          json()->encode($g),$g->{content_hash},$data->{sha256},substr($filename // 'Verkaufsbericht',0,250),$key);
++      }
++      push @keys,$key;
++    }
++    return 1;
++  });
++  die(SL::DB->client->error || 'Import konnte nicht gespeichert werden.') unless $ok;
++  return \@keys;
++}
++sub _iso_date {
++  my ($y,$m,$d)=split /-/, $_[0];
++  return DateTime->new(year=>$y,month=>$m,day=>$d)->to_kivitendo;
++}
++sub form_defaults {
++  my ($key)=@_;
++  my $row=load_import($key);
++  die "Dieser Monatsbericht ist bereits gebucht (Beleg-ID $row->{posted_ar_id})." if $row->{posted_ar_id};
++  my $g=$row->{data}; my %f;
++  my (@items,%by_id); my $source_row=0;
++  for my $item (@{$g->{items}}) {
++    my $id=$row->{mapped}{++$source_row};
++    die "Bitte alle Artikel zuordnen." unless $id && $id =~ /^\d+$/;
++    if ($by_id{$id}) {
++      die "Derselbe Artikel wurde unterschiedlichen Export-Steuersaetzen zugeordnet." if $by_id{$id}{tax_rate} != $item->{tax_rate};
++      $by_id{$id}{quantity} += $item->{quantity};
++    } else {
++      my $combined={%$item,part_id=>$id};
++      $by_id{$id}=$combined; push @items,$combined;
++    }
++  }
++  my $i=0;
++  for my $item (@items) {
++    ++$i;
++    my $id=$item->{part_id};
++    my $p=SL::DB::Part->new(id=>$id)->load;
++    die "Artikel ist inaktiv oder gesperrt: ".$p->partnumber if $p->obsolete || ($p->part_type ne 'part' && $p->part_type ne 'service');
++    my $factor=$p->price_factor_id ? $p->price_factor->factor : 1;
++    die "Ungueltige Preiseinheit." unless $factor>0;
++    @f{map { "${_}_$i" } qw(id partnumber description unit part_type price_factor_id price_factor)}=
++      ($p->id,$p->partnumber,$p->description,$p->unit,$p->part_type,$p->price_factor_id,$factor);
++    $f{"qty_$i"}=$::form->format_amount(\%::myconfig,$item->{quantity},0);
++    $f{"sellprice_$i"}=$::form->format_amount(\%::myconfig,$p->sellprice // 0,5);
++    $f{"discount_$i"}='0';
++    $f{"active_price_source_$i"}='';
++    $f{"active_discount_source_$i"}='';
++  }
++  return { %f, rowcount=>$i, type=>'invoice', vc=>'customer', customer_id=>'', customer=>'', previous_customer_id=>'',
++    currency=>$::form->get_default_currency(\%::myconfig), taxincluded=>0, taxincluded_changed_by_user=>1,
++    invdate=>_iso_date($g->{end_date}),
++    tax_point_start=>_iso_date($g->{start_date}),
++    tax_point=>_iso_date($g->{end_date}),
++    sales_report_key=>$key, sales_report_version=>version($row), paidaccounts=>1, invnumber=>'',
++    transaction_description=>"Automatenverkaeufe $row->{source} $row->{period} $row->{payment}",
++    intnotes=>"Verkaufsbericht $row->{source}, $row->{period}, $row->{payment}\nOriginalumsatz: $g->{total} EUR brutto; Menge $g->{quantity}.\nImport: $key\nArtikelstammpreise (netto), keine historischen Preise. Mengen in lokaler Artikeleinheit; Gebinde kontrollieren. Keine Zahlungsbuchung. Originaldatei bitte als Beleg anhaengen.",
++  };
++}
++sub lock_for_post {
++  my ($dbh,$form)=@_;
++  return unless $form->{sales_report_key};
++  my $row=load_import($form->{sales_report_key},$dbh,1);
++  die "Die Vorbereitung wurde durch einen neueren Bericht ersetzt. Bitte erneut oeffnen."
++    unless ($form->{sales_report_version}//'') eq version($row);
++  die "Dieser Bericht wurde bereits gebucht." if $row->{posted_ar_id} && (!$form->{id} || $row->{posted_ar_id} != $form->{id});
++  die "Verkaufsbericht nur als Verkaufsrechnung buchbar." unless ($form->{type}//'') eq 'invoice' && !$form->{storno};
++  die "Verkaufsbericht muss in EUR gebucht werden." unless ($form->{currency}//'') eq 'EUR';
++  # Source tax rates must remain compatible with the selected article accounts.
++  my %rates; my $n=0;
++  for my $item (@{$row->{data}{items}}) {
++    my $id=$row->{mapped}{++$n};
++    die "Unvollstaendige Artikelzuordnung." unless $id;
++    die "Ein Artikel ist mit unterschiedlichen Export-Steuersaetzen zugeordnet. Bitte getrennte Artikel verwenden."
++      if exists($rates{$id}) && $rates{$id} != $item->{tax_rate};
++    $rates{$id}=$item->{tax_rate};
++  }
++  for my $i (1 .. ($form->{rowcount}||0)) {
++    my $id=$form->{"id_$i"}; next unless $id && exists($rates{$id});
++    my $rate=0;
++    $rate += $form->{"${_}_rate"} // 0 for grep { length } split /\s+/, ($form->{"taxaccounts_$i"}//'');
++    die "Position $i: Artikelsteuer weicht vom Verkaufsbericht ab ($rates{$id} %). Bitte Zuordnung/Kunde/Buchungsgruppe pruefen."
++      if abs($rate*100-$rates{$id}) > 0.00001;
++  }
++  return $row;
++}
++sub mark_posted {
++  my ($dbh,$form)=@_;
++  return unless $form->{sales_report_key};
++  $dbh->do('UPDATE sales_report_imports SET posted_ar_id = ? WHERE import_key = ?',undef,$form->{id},$form->{sales_report_key});
++}
++1;
+--- /dev/null
++++ b/SL/Controller/SalesReport.pm
+@@ -0,0 +1,83 @@
++package SL::Controller::SalesReport;
++use strict;
++use warnings;
++use utf8;
++use parent qw(SL::Controller::Base);
++use SL::SalesReport;
++use SL::DB::Manager::Part;
++use SL::DB::Part;
++use SL::Helper::Flash qw(flash);
++__PACKAGE__->run_before('check_auth');
++sub check_auth { $::auth->assert('invoice_edit') }
++sub action_upload {
++  my ($self)=@_;
++  my $rows=eval { SL::SalesReport::dbh()->selectall_arrayref('SELECT import_key,source,period,payment,posted_ar_id FROM sales_report_imports ORDER BY created_at DESC LIMIT 200',{Slice=>{}}) };
++  return $self->render('sales_report/upload',title=>'Verkaufsbericht importieren',imports=>$rows || [],db_missing=>!defined($rows));
++}
++sub action_import {
++  my ($self)=@_; my $data;
++  my $ok=eval {
++    die "Bitte bestaetigen, dass die Export-Umsaetze Bruttobetraege in EUR sind." unless $::form->{gross_confirmed};
++    die "Dieser Import benoetigt EUR als Mandantenwaehrung." unless $::form->get_default_currency(\%::myconfig) eq 'EUR';
++    $data=SL::SalesReport::analyze($::form->{file},$::form->{year});
++    SL::SalesReport::store_imports($data,$::form->{source}//'', $::form->{file_name},$::form->{replace_open});
++    1;
++  };
++  if (!$ok) { my $error=$@ || 'Import fehlgeschlagen.'; flash('error',$error) }
++  elsif (@{$data->{warnings}}) { flash('warning',join("\n",@{$data->{warnings}})) }
++  return $self->action_upload;
++}
++sub action_mapping {
++  my ($self)=@_;
++  my $row=SL::SalesReport::load_import($::form->{import_key});
++  $row->{version}=SL::SalesReport::version($row);
++  die "Bericht bereits gebucht." if $row->{posted_ar_id};
++  my @rows; my $i=0;
++  for my $item (@{$row->{data}{items}}) {
++    ++$i;
++    my ($saved)=SL::SalesReport::dbh()->selectrow_array('SELECT parts_id FROM sales_report_mappings WHERE source=? AND description=?',undef,$row->{source},$item->{description});
++    my $id=$row->{mapped}{$i} || $saved;
++    my $part=$id ? eval { SL::DB::Part->new(id=>$id)->load } : undef;
++    my $method=$part ? 'Gespeicherte Zuordnung' : 'Bitte Artikel auswaehlen';
++    if ($part && ($part->obsolete)) { $part=undef; $method='Gespeicherter Artikel ist inaktiv/gesperrt' }
++    if (!$part) {
++      my $matches=SL::DB::Manager::Part->get_all(query=>[description=>$item->{description},obsolete=>0,part_type=>['part','service']],limit=>2);
++      if (@$matches==1) { $part=$matches->[0]; $method='Namensvorschlag - bitte bestaetigen' }
++    }
++    push @rows,{%$item,row=>$i,part=>$part,method=>$method};
++  }
++  return $self->render('sales_report/mapping',title=>'Verkaufsbericht: Artikel zuordnen',report=>$row,rows=>\@rows);
++}
++sub action_save_mapping {
++  my ($self)=@_;
++  my $ok=eval {
++    my $result=SL::DB->client->with_transaction(sub {
++      my $dbh=SL::SalesReport::dbh();
++      my $row=SL::SalesReport::load_import($::form->{import_key},$dbh,1);
++      die "Bericht oder Zuordnung wurde zwischenzeitlich geaendert. Bitte die aktuelle Vorbereitung erneut pruefen."
++        unless ($::form->{report_version}//'') eq SL::SalesReport::version($row);
++      die "Bericht bereits gebucht." if $row->{posted_ar_id};
++      my (%mapping,%chosen); my $i=0;
++      for my $item (@{$row->{data}{items}}) {
++        ++$i;my $id=$::form->{"mapping_$i"};
++        die "Position $i: bitte einen Artikel auswaehlen." unless ($id//'') =~ /^\d+$/ && $id>0;
++        my $p=SL::DB::Part->new(id=>$id)->load;
++        die "Position $i: Artikel nicht verkaufbar." if $p->obsolete || ($p->part_type ne 'part' && $p->part_type ne 'service');
++        die "Widerspruechliche Auswahl fuer denselben Artikelnamen." if $chosen{$item->{description}} && $chosen{$item->{description}} != $id;
++        $chosen{$item->{description}}=$id; $mapping{$i}=0+$id;
++        $dbh->do('INSERT INTO sales_report_mappings(source,description,parts_id) VALUES (?,?,?) ON CONFLICT (source,description) DO NOTHING',undef,$row->{source},$item->{description},$id);
++        my ($existing)=$dbh->selectrow_array('SELECT parts_id FROM sales_report_mappings WHERE source=? AND description=? FOR UPDATE',undef,$row->{source},$item->{description});
++        die "Eine bestehende Artikelzuordnung weicht ab. Zum bewussten Aendern das entsprechende Kaestchen aktivieren."
++          if $existing != $id && !$::form->{replace_mapping};
++        $dbh->do('UPDATE sales_report_mappings SET parts_id=? WHERE source=? AND description=?',undef,$id,$row->{source},$item->{description});
++      }
++      $dbh->do('UPDATE sales_report_imports SET mapping=? WHERE import_key=?',undef,SL::SalesReport::json()->encode(\%mapping),$row->{import_key});
++      return 1;
++    });
++    die(SL::DB->client->error || 'Zuordnung konnte nicht gespeichert werden.') unless $result;
++    1;
++  };
++  if (!$ok) { my $error=$@; flash('error',$error); return $self->action_mapping }
++  return $self->redirect_to(controller=>'is.pl',action=>'load_sales_report',sales_report_key=>$::form->{import_key});
++}
++1;
+--- /dev/null
++++ b/sql/Pg-upgrade2/sales_report_import.sql
+@@ -0,0 +1,23 @@
++-- @tag: sales_report_import
++-- @description: Verkaufsbericht-Import: Artikelzuordnungen und transaktionssichere Importvorgaenge
++-- @depends: release_3_9_0
++CREATE TABLE sales_report_imports (
++  import_key text PRIMARY KEY,
++  source text NOT NULL,
++  period text NOT NULL,
++  payment text NOT NULL,
++  content_hash text NOT NULL,
++  payload text NOT NULL,
++  mapping text NOT NULL DEFAULT '{}',
++  source_sha256 text NOT NULL,
++  filename text NOT NULL,
++  posted_ar_id integer REFERENCES ar(id) ON DELETE RESTRICT,
++  created_at timestamp NOT NULL DEFAULT now(),
++  UNIQUE(source, period, payment)
++);
++CREATE TABLE sales_report_mappings (
++  source text NOT NULL,
++  description text NOT NULL,
++  parts_id integer NOT NULL REFERENCES parts(id) ON DELETE RESTRICT,
++  PRIMARY KEY(source, description)
++);
+--- /dev/null
++++ b/menus/user/90-sales-report.yaml
+@@ -0,0 +1,8 @@
++---
++- parent: ar
++  id: sales_report_import
++  name: Verkaufsbericht importieren
++  order: 950
++  access: invoice_edit
++  params:
++    action: SalesReport/upload
+--- /dev/null
++++ b/templates/design40_webpages/sales_report/upload.html
+@@ -0,0 +1,24 @@
++[% USE L %][% USE HTML %]
++<h1>[% title | html %]</h1>
++<div class="wrapper">
++[% IF db_missing %]
++<p class="red">Das Datenbankupdate sales_report_import fehlt. Bitte abmelden und das Mandanten-Datenbankupdate ausfuehren.</p>
++[% ELSE %]
++<p>Original-CSV oder textbasierte PDF hochladen. Pro Standort, Monat und Zahlungsart wird eine Vorbereitung angelegt. Kundenauswahl und Buchen erfolgen anschliessend in der Verkaufsrechnung.</p>
++<form method="post" action="controller.pl" enctype="multipart/form-data">
++<p>Standort / Quelle (bei weiteren Importen identisch verwenden): [% L.input_tag('source', FORM.source, size=45, required='required') %]</p>
++<p>Jahr, falls es in der Datei fehlt: [% L.input_tag('year', FORM.year, size=6, placeholder='JJJJ') %]<br>Ohne Jahr in der Datei bitte hier die Jahreszahl eingeben, z. B. 2026. Das Feld ist nicht vorbelegt. Der Monat muss in der Datei stehen.</p>
++<p>[% L.input_tag('file', '', type='file', accept='.csv,.pdf', required='required', onchange="this.form.file_name.value=this.files[0].name") %][% L.hidden_tag('file_name','') %]</p>
++<p>[% L.checkbox_tag('gross_confirmed',value=1,checked=FORM.gross_confirmed,label='Die Umsatzsummen sind Bruttobetraege in EUR.',required='required') %]</p>
++<p>[% L.checkbox_tag('replace_open',value=1,checked=FORM.replace_open,label='Geaenderte offene Monatsberichte ersetzen. Alte Rechnungs-Tabs werden dadurch ungueltig; gebuchte Berichte bleiben geschuetzt.') %]</p>
++<button type="submit" name="action" value="SalesReport/import">Bericht einlesen</button>
++</form>
++<p>PDF: alle Spalten auf derselben Seite, lesbarer Text. Scans und beliebige Rechnungslayouts werden hier nicht erkannt. CSV: Verkaufsstatistik mit Produkt, Zahlungsart, Steuersatz, Verkaeufe, Summe € oder detaillierter Verkaufsbericht.</p>
++<h2>Letzte Importvorgaenge</h2>
++<table class="tbl-list"><thead><tr><th>Quelle</th><th>Monat</th><th>Zahlungsart</th><th>Status</th></tr></thead><tbody>
++[% FOREACH row=imports %]<tr><td>[% row.source | html %]</td><td>[% row.period | html %]</td><td>[% IF row.payment == 'CASH' %]Bar[% ELSE %]Bargeldlos[% END %]</td><td>
++[% IF row.posted_ar_id %]<a href="is.pl?action=edit&amp;type=invoice&amp;id=[% row.posted_ar_id | html %]">Gebuchte Rechnung oeffnen</a>
++[% ELSE %]<a href="controller.pl?action=SalesReport/mapping&amp;import_key=[% row.import_key | html %]">Zuordnen / Vorbereitung wieder oeffnen</a>[% END %]
++</td></tr>[% END %]</tbody></table>
++[% END %]
++</div>
+--- /dev/null
++++ b/templates/design40_webpages/sales_report/mapping.html
+@@ -0,0 +1,15 @@
++[% USE L %][% USE P %]
++<h1>[% title | html %]</h1>
++<div class="wrapper">
++<p>[% report.source | html %] / [% report.period | html %] / [% report.payment | html %]. Originalumsatz: [% report.data.total | html %] EUR brutto. Menge: [% report.data.quantity | html %].</p>
++<p>Zuordnungen werden fuer diese Quelle gespeichert. Preise kommen aus dem aktuellen Artikelstamm und sind anschliessend aenderbar. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
++<form method="post" action="controller.pl">
++[% L.hidden_tag('import_key', report.import_key) %]
++[% L.hidden_tag('report_version', report.version) %]
++<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
++[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
++</tbody></table>
++<p>[% L.checkbox_tag('replace_mapping',value=1,label='Abweichende bisherige Zuordnungen bewusst ersetzen.') %]</p>
++<button type="submit" name="action" value="SalesReport/save_mapping">Zuordnungen speichern und Verkaufsrechnung oeffnen</button>
++</form>
++</div>
+--- a/bin/mozilla/is.pl
++++ b/bin/mozilla/is.pl
+@@ -123,6 +123,24 @@
+   $main::lxdebug->leave_sub();
+ }
+ 
++# Open an unposted invoice from a server-side verified import; no customer default.
++sub load_sales_report {
++  $::auth->assert('invoice_edit');
++  require SL::SalesReport;
++  my $defaults = SL::SalesReport::form_defaults($::form->{sales_report_key});
++  delete @{$::form}{qw(id customer customer_id previous_customer_id)};
++  $::form->{type} = 'invoice';
++  invoice_links(is_new => 1);
++  $::form->{$_} = $defaults->{$_} for keys %$defaults;
++  $::form->{title} = $::locale->text('Add Sales Invoice');
++  $::form->{show_details} = $::myconfig{show_form_details};
++  $::form->{form_validity_token} = SL::DB::ValidityToken->create(
++    scope => SL::DB::ValidityToken::SCOPE_SALES_INVOICE_POST())->token;
++  $::form->{callback} = 'controller.pl?action=SalesReport/upload';
++  prepare_invoice();
++  display_form();
++}
++
+ sub add_from_email_journal {
+   die "No 'email_journal_id' was given." unless ($::form->{email_journal_id});
+   &add;
+@@ -753,7 +771,7 @@
+ 
+   # hiddens
+   $TMPL_VAR{HIDDENS} = [qw(
+-    id type queued printed emailed vc discount
++    id type queued printed emailed vc discount sales_report_key sales_report_version
+     title creditlimit creditremaining tradediscount business closedto locked shipped storno storno_id
+     max_dunning_level dunning_amount dunning_description
+     taxaccounts cursor_fokus
+@@ -888,6 +906,13 @@
+   foreach my $var (@{ $shipto_cvars }) {
+     my $name = "shiptocvar_" . $var->config->name;
+     $var->value($form->{$name}) if exists $form->{$name};
++  }
++
++  if ($form->{sales_report_key}) {
++    require SL::SalesReport;
++    my $report = SL::SalesReport::load_import($form->{sales_report_key});
++    $form->{sales_report_original_total} = $report->{data}{total};
++    $form->{sales_report_difference} = $form->{invtotal} - $report->{data}{total};
+   }
+ 
+   print $form->parse_html_template('is/form_footer', {
+@@ -939,7 +964,7 @@
+   $form->{print_and_post} = 0         if $form->{second_run};
+   $form->{update} = 1;
+ 
+-  if (($form->{previous_customer_id} || $form->{customer_id}) != $form->{customer_id}) {
++  if (($form->{previous_customer_id} || ($form->{sales_report_key} ? 0 : $form->{customer_id})) != $form->{customer_id}) {
+     $::form->{salesman_id} = SL::DB::Manager::Employee->current->id if exists $::form->{salesman_id};
+ 
+     IS->get_customer(\%myconfig, $form);
+@@ -1153,7 +1178,7 @@
+   $form->{invnumber} =~ s/\s*$//g;
+ 
+   # if oldcustomer ne customer redo form
+-  if (($form->{previous_customer_id} || $form->{customer_id}) != $form->{customer_id}) {
++  if (($form->{previous_customer_id} || ($form->{sales_report_key} ? 0 : $form->{customer_id})) != $form->{customer_id}) {
+     &update;
+     $::dispatcher->end_request;
+   }
+--- a/SL/IS.pm
++++ b/SL/IS.pm
+@@ -790,6 +790,11 @@
+ 
+   my $payments_only = $params{payments_only};
+   my $dbh = $provided_dbh || SL::DB->client->dbh;
++  if ($form->{sales_report_key} && !$payments_only) {
++    require SL::SalesReport;
++    SL::SalesReport::lock_for_post($dbh, $form);
++  }
++
+   my $restricter = SL::HTML::Restrict->create;
+ 
+   my ($query, $sth, $null, $project_id, @values);
+@@ -1710,6 +1715,8 @@
+     $shop->connector->set_orderstatus($shop_order->shop_trans_id, "completed");
+   }
+ 
++  SL::SalesReport::mark_posted($dbh, $form) if $form->{sales_report_key};
++
+   $validity_token->delete if $validity_token;
+   delete $form->{form_validity_token};
+ 
+--- a/templates/design40_webpages/is/form_footer.html
++++ b/templates/design40_webpages/is/form_footer.html
+@@ -8,6 +8,14 @@
+   Total-Lines of Invoice Items
+   Within the big colspan/rowspan cell there are weight information
+ -->
++[% IF sales_report_key %]
++<div class="wrapper">
++  <p><strong>Verkaufsbericht:</strong> Originalumsatz [% LxERP.format_amount(sales_report_original_total, 2) %] EUR brutto.
++  Differenz zur aktuellen Rechnung: <strong>[% LxERP.format_amount(sales_report_difference, 2) %] EUR</strong>.</p>
++  <p>Kunden passend zur Zahlungsart auswaehlen, Artikelpreise, Steuern und Mengeneinheiten pruefen. Erst Buchen erzeugt den Beleg.
++  Eine erneut geoeffnete Vorbereitung verwendet wieder die Artikelstammpreise; ungebuchte Maskenaenderungen werden nicht automatisch gespeichert.</p>
++</div>
++[% END %]
+ <table class="tbl-list footer-only full-width">
+   <colgroup>
+     <col style="width: 10%;">
+--- a/SL/PriceSource/PriceRules.pm
++++ b/SL/PriceSource/PriceRules.pm
+@@ -15,6 +15,10 @@
+ 
+ sub available_rules {
+   my ($self, %params) = @_;
++
++  # Imported invoice items can exist before the user selects a customer.
++  # Do not cache this result: evaluate normally once a partner is selected.
++  return [] unless $self->customer_vendor;
+ 
+   $self->{available} ||= SL::DB::Manager::PriceRule->get_all_matching(record => $self->record, record_item => $self->record_item);
+ }

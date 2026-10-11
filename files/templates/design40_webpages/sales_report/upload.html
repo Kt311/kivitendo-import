@@ -1,0 +1,24 @@
+[% USE L %][% USE HTML %]
+<h1>[% title | html %]</h1>
+<div class="wrapper">
+[% IF db_missing %]
+<p class="red">Das Datenbankupdate sales_report_import fehlt. Bitte abmelden und das Mandanten-Datenbankupdate ausfuehren.</p>
+[% ELSE %]
+<p>Original-CSV oder textbasierte PDF hochladen. Pro Standort, Monat und Zahlungsart wird eine Vorbereitung angelegt. Kundenauswahl und Buchen erfolgen anschliessend in der Verkaufsrechnung.</p>
+<form method="post" action="controller.pl" enctype="multipart/form-data">
+<p>Standort / Quelle (bei weiteren Importen identisch verwenden): [% L.input_tag('source', FORM.source, size=45, required='required') %]</p>
+<p>Jahr, falls es in der Datei fehlt: [% L.input_tag('year', FORM.year, size=6, placeholder='JJJJ') %]<br>Ohne Jahr in der Datei bitte hier die Jahreszahl eingeben, z. B. 2026. Das Feld ist nicht vorbelegt. Der Monat muss in der Datei stehen.</p>
+<p>[% L.input_tag('file', '', type='file', accept='.csv,.pdf', required='required', onchange="this.form.file_name.value=this.files[0].name") %][% L.hidden_tag('file_name','') %]</p>
+<p>[% L.checkbox_tag('gross_confirmed',value=1,checked=FORM.gross_confirmed,label='Die Umsatzsummen sind Bruttobetraege in EUR.',required='required') %]</p>
+<p>[% L.checkbox_tag('replace_open',value=1,checked=FORM.replace_open,label='Geaenderte offene Monatsberichte ersetzen. Alte Rechnungs-Tabs werden dadurch ungueltig; gebuchte Berichte bleiben geschuetzt.') %]</p>
+<button type="submit" name="action" value="SalesReport/import">Bericht einlesen</button>
+</form>
+<p>PDF: alle Spalten auf derselben Seite, lesbarer Text. Scans und beliebige Rechnungslayouts werden hier nicht erkannt. CSV: Verkaufsstatistik mit Produkt, Zahlungsart, Steuersatz, Verkaeufe, Summe € oder detaillierter Verkaufsbericht.</p>
+<h2>Letzte Importvorgaenge</h2>
+<table class="tbl-list"><thead><tr><th>Quelle</th><th>Monat</th><th>Zahlungsart</th><th>Status</th></tr></thead><tbody>
+[% FOREACH row=imports %]<tr><td>[% row.source | html %]</td><td>[% row.period | html %]</td><td>[% IF row.payment == 'CASH' %]Bar[% ELSE %]Bargeldlos[% END %]</td><td>
+[% IF row.posted_ar_id %]<a href="is.pl?action=edit&amp;type=invoice&amp;id=[% row.posted_ar_id | html %]">Gebuchte Rechnung oeffnen</a>
+[% ELSE %]<a href="controller.pl?action=SalesReport/mapping&amp;import_key=[% row.import_key | html %]">Zuordnen / Vorbereitung wieder oeffnen</a>[% END %]
+</td></tr>[% END %]</tbody></table>
+[% END %]
+</div>

@@ -1,0 +1,15 @@
+[% USE L %][% USE P %]
+<h1>[% title | html %]</h1>
+<div class="wrapper">
+<p>[% report.source | html %] / [% report.period | html %] / [% report.payment | html %]. Originalumsatz: [% report.data.total | html %] EUR brutto. Menge: [% report.data.quantity | html %].</p>
+<p>Zuordnungen werden fuer diese Quelle gespeichert. Preise kommen aus dem aktuellen Artikelstamm und sind anschliessend aenderbar. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
+<form method="post" action="controller.pl">
+[% L.hidden_tag('import_key', report.import_key) %]
+[% L.hidden_tag('report_version', report.version) %]
+<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
+[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
+</tbody></table>
+<p>[% L.checkbox_tag('replace_mapping',value=1,label='Abweichende bisherige Zuordnungen bewusst ersetzen.') %]</p>
+<button type="submit" name="action" value="SalesReport/save_mapping">Zuordnungen speichern und Verkaufsrechnung oeffnen</button>
+</form>
+</div>

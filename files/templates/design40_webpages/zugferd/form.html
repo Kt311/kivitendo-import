@@ -1,0 +1,17 @@
+[% USE HTML %]
+[% USE LxERP %]
+[% USE L %]
+[% USE T8 %]
+
+<div class="wrapper">
+
+  <p>[% "Import a Factur-X/ZUGFeRD file:" | $T8 %]</p>
+
+  <p>Normale PDFs werden lokal ausgelesen und vor dem Import zur Pruefung angezeigt. Scans benoetigen Tesseract. Maximal 20 Seiten / 50 MiB.</p>
+  <form method="post" action="controller.pl" enctype="multipart/form-data" id="form">
+    [% L.input_tag('file', '', type => 'file', accept => '.pdf,.xml', onchange='kivi.ZUGFeRD.update_file_name();') %]
+    [% L.hidden_tag('file_name', '') %]
+    <p>[% L.checkbox_tag('import_as_purchase_invoice', value=1, checked=1, label='Als Einkaufsrechnung mit Artikelpositionen importieren') %]</p>
+  </form>
+
+</div>

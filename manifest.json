@@ -1,0 +1,251 @@
+{
+  "version": "4.1.0-xrechnung-6.2",
+  "files": {
+    "SL/PDFInvoice.pm": {
+      "before": null,
+      "after": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b"
+    },
+    "scripts/pdf_invoice_review.py": {
+      "before": null,
+      "after": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c"
+    },
+    "templates/design40_webpages/zugferd/pdf_review.html": {
+      "before": null,
+      "after": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037"
+    },
+    "SL/Controller/ZUGFeRD.pm": {
+      "before": "7a681d34c07ca62f5e108e8a2bcdacb2416500ac37cfe9c8afff5dcf8b8c4d81",
+      "after": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a"
+    },
+    "SL/XMLInvoice/UBL.pm": {
+      "before": "925f5de671f792babd52ad3d1a35282da1eec790e403f9103ed8e9c18983c215",
+      "after": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499"
+    },
+    "bin/mozilla/ir.pl": {
+      "before": "8df55a7e553cd492f42fb40a6f2931a3bc566a660f71bcfce612abd16eca4206",
+      "after": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c"
+    },
+    "templates/design40_webpages/zugferd/form.html": {
+      "before": "915fb5876670077e04ff954e98d551aab55dcb6a6205be227f598bdf66add2a4",
+      "after": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233"
+    },
+    "templates/design40_webpages/zugferd/mapping.html": {
+      "before": null,
+      "after": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235"
+    },
+    "scripts/sales_report_import.py": {
+      "before": null,
+      "after": "ba1e99248e6fdce67aee76dd6e85bdc1719d121a3f5641d04c797f96a361a592"
+    },
+    "SL/SalesReport.pm": {
+      "before": null,
+      "after": "d3845d511b3e5f832163d4deaebed2ae60a3a4cb96cd9fece66737489a2904b0"
+    },
+    "SL/Controller/SalesReport.pm": {
+      "before": null,
+      "after": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae"
+    },
+    "sql/Pg-upgrade2/sales_report_import.sql": {
+      "before": null,
+      "after": "2342e28e90db51109623b5e457043c194c77b03bda2be36047ed3be10483233f"
+    },
+    "menus/user/90-sales-report.yaml": {
+      "before": null,
+      "after": "b631dc2ad1bd7f8b7d16200159adf4ce578ef4557e765668fbc373de5808efb5"
+    },
+    "templates/design40_webpages/sales_report/upload.html": {
+      "before": null,
+      "after": "160562c4f0c19fe3ab3aea457223e9048edb7abe44bc60a0794820ea8a3e1811"
+    },
+    "templates/design40_webpages/sales_report/mapping.html": {
+      "before": null,
+      "after": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23"
+    },
+    "bin/mozilla/is.pl": {
+      "before": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "after": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee"
+    },
+    "SL/IS.pm": {
+      "before": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "after": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40"
+    },
+    "templates/design40_webpages/is/form_footer.html": {
+      "before": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "after": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525"
+    },
+    "SL/PriceSource/PriceRules.pm": {
+      "before": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "after": "3a9e62398ad284a6b5ac69dd66509600a3577c443a7d083c7ff248cad64f32f7"
+    }
+  },
+  "compatible_versions": {
+    "4.1.0-xrechnung-1": {
+      "SL/Controller/ZUGFeRD.pm": "e87e37ae7b10ed37a0122f0a8c3337a00241e2ab25b8eb7efbf4520827f2da83",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "88498c6bd087eb3ace0ddfeeaef17dbcafb085e16005cc4d6442a63622af6ae7",
+      "templates/design40_webpages/zugferd/mapping.html": "a04338b1da0a106574a7883e4ff3569610560467b680f803cff122b07431f624",
+      "SL/PDFInvoice.pm": null,
+      "scripts/pdf_invoice_review.py": null,
+      "templates/design40_webpages/zugferd/pdf_review.html": null,
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-2": {
+      "SL/Controller/ZUGFeRD.pm": "30eb287e68993636b84eea144ea34201ffa4621940683728a943461b225237bd",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "88498c6bd087eb3ace0ddfeeaef17dbcafb085e16005cc4d6442a63622af6ae7",
+      "templates/design40_webpages/zugferd/mapping.html": "a04338b1da0a106574a7883e4ff3569610560467b680f803cff122b07431f624",
+      "SL/PDFInvoice.pm": null,
+      "scripts/pdf_invoice_review.py": null,
+      "templates/design40_webpages/zugferd/pdf_review.html": null,
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-3": {
+      "SL/Controller/ZUGFeRD.pm": "30eb287e68993636b84eea144ea34201ffa4621940683728a943461b225237bd",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "88498c6bd087eb3ace0ddfeeaef17dbcafb085e16005cc4d6442a63622af6ae7",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "SL/PDFInvoice.pm": null,
+      "scripts/pdf_invoice_review.py": null,
+      "templates/design40_webpages/zugferd/pdf_review.html": null,
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-4": {
+      "SL/Controller/ZUGFeRD.pm": "07a7c38f75c22a2592e553a88418088b41bf1a13f4fdf76b2e2c0f5e788b8ea6",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "88498c6bd087eb3ace0ddfeeaef17dbcafb085e16005cc4d6442a63622af6ae7",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "SL/PDFInvoice.pm": null,
+      "scripts/pdf_invoice_review.py": null,
+      "templates/design40_webpages/zugferd/pdf_review.html": null,
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-5": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "5a4462b3ccd75f68e7eecbed2a9825aeae00e732d80cc02a81dc346ba9b073c1",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "ca6abd48d5d0d7322bea379bcf0357551d2918a92f4e5c34a9cffcabcd300010",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-5.1": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": null,
+      "SL/SalesReport.pm": null,
+      "SL/Controller/SalesReport.pm": null,
+      "sql/Pg-upgrade2/sales_report_import.sql": null,
+      "menus/user/90-sales-report.yaml": null,
+      "templates/design40_webpages/sales_report/upload.html": null,
+      "templates/design40_webpages/sales_report/mapping.html": null,
+      "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
+      "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
+      "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-6": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": "7ca530696c2919c8bd604db507d182fc67524c31bd9be4c3ffc5a568b1dc3f02",
+      "SL/SalesReport.pm": "61b65644a439ef7a25479eec3c3f5020c58d5129891c5b367347ce517c6d2ade",
+      "SL/Controller/SalesReport.pm": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae",
+      "sql/Pg-upgrade2/sales_report_import.sql": "2342e28e90db51109623b5e457043c194c77b03bda2be36047ed3be10483233f",
+      "menus/user/90-sales-report.yaml": "b631dc2ad1bd7f8b7d16200159adf4ce578ef4557e765668fbc373de5808efb5",
+      "templates/design40_webpages/sales_report/upload.html": "f889a3bc26f521cf52ee8c63ffd4b2d38b1943f618d537eff87fc8945e8d0adc",
+      "templates/design40_webpages/sales_report/mapping.html": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23",
+      "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
+      "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
+      "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    },
+    "4.1.0-xrechnung-6.1": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": "ba1e99248e6fdce67aee76dd6e85bdc1719d121a3f5641d04c797f96a361a592",
+      "SL/SalesReport.pm": "d3845d511b3e5f832163d4deaebed2ae60a3a4cb96cd9fece66737489a2904b0",
+      "SL/Controller/SalesReport.pm": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae",
+      "sql/Pg-upgrade2/sales_report_import.sql": "2342e28e90db51109623b5e457043c194c77b03bda2be36047ed3be10483233f",
+      "menus/user/90-sales-report.yaml": "b631dc2ad1bd7f8b7d16200159adf4ce578ef4557e765668fbc373de5808efb5",
+      "templates/design40_webpages/sales_report/upload.html": "160562c4f0c19fe3ab3aea457223e9048edb7abe44bc60a0794820ea8a3e1811",
+      "templates/design40_webpages/sales_report/mapping.html": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23",
+      "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
+      "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
+      "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+    }
+  }
+}

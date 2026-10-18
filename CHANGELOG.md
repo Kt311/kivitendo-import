@@ -1,3 +1,17 @@
+## 6.3 – 2026-10-18
+
+- XML-Steuerbeträge in Kreditorenbuchungen beim Aktualisieren und Buchen
+  anhand der Original-Steuergruppen kontrolliert abgleichen.
+- Rundungskontext transaktionssicher am Beleg speichern; erneutes Bearbeiten
+  benötigt die ursprüngliche Sitzung nicht mehr.
+- Nettosummen und Steuersätze prüfen, größere Differenzen zurückweisen.
+- CII-Rechnungsbrutto aus GrandTotalAmount statt DuePayableAmount lesen;
+  Vorauszahlung und offenen Zahlbetrag getrennt auslesen.
+- Steuerzuordnung aus XML beim Laden einer Buchungsvorlage beibehalten.
+- Neues Mandanten-Datenbankupdate xml_tax_rounding erforderlich.
+- Tests für Aktualisieren, wiederholtes Aktualisieren, Buchen, Wiederöffnen,
+  zusammengefasste Gruppen und ungültige Abweichungen hinzugefügt.
+
 # Änderungen
 
 ## 6.2

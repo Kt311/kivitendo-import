@@ -13,9 +13,10 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - run: perl tests/sales_report.t files
       - run: perl tests/price_rules_without_customer.t files
+      - run: perl tests/xml_tax_rounding.t
       - run: python3 tools/build_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: kivitendo-import-v6.2
+          name: kivitendo-import-v6.3
           path: dist/*.zip
           if-no-files-found: error

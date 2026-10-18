@@ -1,6 +1,6 @@
 # kivitendo Import-Erweiterung
 
-Import-Erweiterung **v6.2 für kivitendo ERP 4.1.0**. Enthält Quellcode,
+Import-Erweiterung **v6.3 für kivitendo ERP 4.1.0**. Enthält Quellcode,
 geprüften Installer und Tests. Eigenständiges Community-Patchpaket, kein
 offizielles kivitendo-Release und keine vollständige ERP-Installation.
 
@@ -24,7 +24,7 @@ Test mit Datenbank, Steuereinstellungen und Weboberfläche.
 ## Voraussetzungen
 
 - kivitendo **4.1.0**, unveränderter passender Quellstand oder bekannte
-  Paketversion 1 bis 6.1. Abweichende lokale Änderungen stoppt der Installer.
+  Paketversion 1 bis 6.2. Abweichende lokale Änderungen stoppt der Installer.
 - Python **3.9 oder neuer** (Installer und Parser), bestehende kivitendo-Perl-Umgebung.
 - Poppler für PDF, IPC::Run für den Aufruf des Parsers; Tesseract für OCR.
 
@@ -49,8 +49,10 @@ sudo systemctl restart apache2
 Bei anderer Betriebsart die entsprechenden kivitendo-Anwendungsprozesse neu starten.
 Kein vorheriger Rollback erforderlich. Erstinstallation der Verkaufsfunktion:
 neu anmelden und das von kivitendo angebotene Mandanten-Datenbankupdate ausführen.
-Der Installer führt SQL nicht selbst aus. Version 6.2 benötigt gegenüber 6/6.1
-keine zusätzliche Datenbankmigration.
+Der Installer führt SQL nicht selbst aus. **Version 6.3 benötigt das neue
+Mandanten-Datenbankupdate `xml_tax_rounding`.** Nach dem Neustart neu anmelden
+und das angebotene Datenbankupdate ausführen, bevor Kreditorenbuchungen bearbeitet
+werden. Das zusätzliche Feld speichert die XML-Steuerwerte am gebuchten Beleg.
 
 ## Verkaufsbericht verwenden
 
@@ -91,6 +93,40 @@ PDF-Verkaufsberichte benötigen lesbaren Text und zusammenhängende Spalten;
 gescannte Verkaufsberichte und beliebige PDF-Layouts werden nicht unterstützt.
 
 ## Einkaufsimport
+
+### XML-Rundungsabgleich in Kreditorenbuchungen (v6.3)
+
+Bei XML-Rechnungen (Typ 380, Steuerkategorien S/Z/E) werden die ausgewiesenen
+Steuerbeträge je Steuersatz beim **Aktualisieren und Buchen** erhalten. Der
+Abgleich verändert ausschließlich Steuerzeilen um höchstens einen Cent pro
+Zeile; Nettobeträge, Mengen, Konten und Steuerschlüssel bleiben erhalten. Die
+XML-Steuer je Gruppe darf höchstens einen Cent von der gerundeten Steuerbasis
+abweichen. Größere Differenzen sowie geänderte Nettosummen, Steuersätze,
+Lieferanten, Rechnungsnummern oder Währungen stoppen den Abgleich.
+
+Beispiel: 120,73 EUR netto und XML-Steuerbeträge 4,57 EUR (7 %) plus 10,54 EUR
+(19 %) ergeben 135,84 EUR. Sowohl Einzelpositionen als auch zusammengefasste
+Buchungszeilen behalten dieses Ergebnis. Beim Buchen wird der Kontext innerhalb
+derselben Datenbanktransaktion gespeichert und beim späteren Bearbeiten erneut
+verwendet. Ohne XML-Kontext arbeiten gewöhnliche Kreditorenbuchungen wie bisher.
+Der CII-Parser verwendet `GrandTotalAmount` als Rechnungsbrutto; `DuePayableAmount`
+ist der separate offene Zahlbetrag. Vorauszahlungen werden nicht automatisch gebucht.
+
+Geltungsbereich: **Kreditorenbuchung (`ap.pl`)**, Nettoeingabe und keine
+Währungsumrechnung. Artikelbasierte Einkaufsrechnungen (`ir.pl`) haben einen
+anderen Rechenweg und sind von diesem Rundungsabgleich nicht erfasst. Die
+CII-Korrektur der Rechnungssumme gilt für beide Importwege. Buchungen, die schon
+vor Version 6.3 erstellt wurden, erhalten nicht rückwirkend XML-Steuerdaten.
+Vorhandene Belege werden nicht automatisch verändert. Bei ungebuchten alten
+Import-Tabs nach dem Update die XML erneut importieren. Bereits gebuchte
+Altbelege anhand des Originalbelegs prüfen und über den regulären Korrekturweg
+berichtigen; keine zweite Rechnung mit derselben Nummer anlegen.
+
+Die zusätzlichen Rundungstests verwenden Ersatzobjekte für Datenbank und
+Sitzungsdateien sowie die originalen 4.1.0-Rechenfunktionen. Eine vollständige
+Buchung im eigenen Testmandanten einschließlich Datenbankupdate und erneutem
+Öffnen bleibt vor dem Produktiveinsatz erforderlich.
+
 
 Den bestehenden ZUGFeRD-/XML-Import öffnen. Für Artikelpositionen die Option
 **Als Einkaufsrechnung mit Artikelpositionen importieren** aktivieren und

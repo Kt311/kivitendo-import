@@ -1,3 +1,20 @@
+# Änderungen
+
+## 6.4 – 2026-10-18
+
+- Historische Verkaufspreise und Bruttoumsaetze aus Senvend-Exporten statt
+  aktueller Artikelstammpreise uebernehmen; Preisvarianten getrennt halten.
+- Verkaufsereignisse mit Zeitpunkt, Automat, Fach und Rechnungsnummer in
+  Importvorbereitungen erhalten; keine erfundenen Produkt-IDs.
+- Portfolioauswertung fuer Absatz, Umsatz, Preisbeobachtungen und beobachtete
+  Bezeichnungswechsel am selben Fach ergaenzen.
+- Auffaellige Kleinbetraege und widerspruechliche Rechnungsnummern sichtbar
+  zur dokumentierten Pruefung sperren; Werte nicht automatisch korrigieren.
+- Buchungspruefung fuer Mengen, Artikel, Originalpreise, Einheiten, Rabatte
+  und den finalen Gesamtbetrag; keine automatische Zahlungsbuchung.
+- Alte ungebuchte Vorbereitungen muessen neu importiert werden. Gebuchte
+  Altbelege werden nicht veraendert. Keine neue Migration gegenueber 6.3.
+
 ## 6.3 – 2026-10-18
 
 - XML-Steuerbeträge in Kreditorenbuchungen beim Aktualisieren und Buchen

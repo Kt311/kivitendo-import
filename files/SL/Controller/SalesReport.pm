@@ -27,6 +27,11 @@ sub action_import {
   elsif (@{$data->{warnings}}) { flash('warning',join("\n",@{$data->{warnings}})) }
   return $self->action_upload;
 }
+sub action_portfolio {
+  my ($self)=@_;
+  my $data=SL::SalesReport::portfolio($::form->{source});
+  return $self->render('sales_report/portfolio',title=>'Senvend: Produkte und Preisbeobachtungen',data=>$data);
+}
 sub action_mapping {
   my ($self)=@_;
   my $row=SL::SalesReport::load_import($::form->{import_key});
@@ -58,6 +63,12 @@ sub action_save_mapping {
         unless ($::form->{report_version}//'') eq SL::SalesReport::version($row);
       die "Bericht bereits gebucht." if $row->{posted_ar_id};
       my (%mapping,%chosen); my $i=0;
+      if (@{ $row->{data}{review_issues} || [] }) {
+        my $note=$::form->{review_note} // ''; $note =~ s/^\s+|\s+$//g;
+        die "Auffaelligkeiten zuerst pruefen, bestaetigen und Pruefnotiz ausfuellen."
+          unless $::form->{review_accepted} && length($note)>=10 && length($note)<=2000;
+        $mapping{_review_accepted}=1; $mapping{_review_note}=$note;
+      }
       for my $item (@{$row->{data}{items}}) {
         ++$i;my $id=$::form->{"mapping_$i"};
         die "Position $i: bitte einen Artikel auswaehlen." unless ($id//'') =~ /^\d+$/ && $id>0;

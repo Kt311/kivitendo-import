@@ -24,9 +24,10 @@ eval $controller;is($@,'','sales controller compiles with dependencies stubbed')
  sub do {my ($s,$sql,$unused,@args)=@_;$s->{updated}=\@args;1}
 }
 my $key='a'x64;
-my $db=bless {row=>{content_hash=>'version1',payload=>JSON::PP->new->encode({items=>[{tax_rate=>19}]}),mapping=>' {"1":7}',posted_ar_id=>undef}},'FakeDB';
+my $db=bless {row=>{content_hash=>'version1',payload=>JSON::PP->new->encode({schema_version=>2,total=>'4.00',items=>[{description=>'Cola',quantity=>2,total=>'4.00',unit_gross=>'2.00000',tax_rate=>19}]}),mapping=>' {"1":7}',posted_ar_id=>undef}},'FakeDB';
 my $version=SL::SalesReport::version($db->{row});
-my %form=(sales_report_key=>$key,sales_report_version=>$version,type=>'invoice',currency=>'EUR',rowcount=>1,id_1=>7,taxaccounts_1=>'1776','1776_rate'=>.19);
+
+my %form=(sales_report_key=>$key,sales_report_version=>$version,type=>'invoice',currency=>'EUR',rowcount=>1,id_1=>7,taxaccounts_1=>'1776','1776_rate'=>.19,taxincluded=>1,qty_1=>2,sellprice_1=>2,unit_1=>'Stck');
 ok(SL::SalesReport::lock_for_post($db,\%form),'unposted report may be posted');
 ok($db->{locked},'row locked until transaction completion');
 $form{sales_report_version}='old';eval {SL::SalesReport::lock_for_post($db,\%form)};like($@,qr/neueren Bericht/,'old open invoice rejected after corrected re-upload');$form{sales_report_version}=$version;
@@ -48,7 +49,7 @@ eval "package TestIS; sub invoice_links {} sub prepare_invoice {} sub display_fo
 is($@,'','native invoice entry point compiles');
 {
  package FakeForm;
- sub format_amount { $_[2] } sub get_default_currency {'EUR'}
+ sub format_amount { $_[2] } sub get_default_currency {'EUR'} sub parse_amount { $_[2] // 0 }
  package DateTime;
  sub new { my($c,%p)=@_;bless \%p,$c }
  sub to_kivitendo {sprintf('%02d.%02d.%04d',$_[0]{day},$_[0]{month},$_[0]{year})}
@@ -62,15 +63,57 @@ is($@,'','native invoice entry point compiles');
  local *SL::SalesReport::dbh=sub {$db};
  local $::form=bless {},'FakeForm';
  local $db->{row}={content_hash=>'v',mapping=>'{"1":7,"2":7}',source=>'Automat',period=>'2026-09',payment=>'CASH',
-   payload=>JSON::PP->new->encode({items=>[{description=>'Cola',tax_rate=>19,quantity=>2},{description=>'Cola Alias',tax_rate=>19,quantity=>3}],
+   payload=>JSON::PP->new->encode({schema_version=>2,items=>[{description=>'Cola',tax_rate=>19,quantity=>2,total=>'4.00',unit_gross=>'2.00000'},{description=>'Cola Alias',tax_rate=>19,quantity=>3,total=>'6.00',unit_gross=>'2.00000'}],
      end_date=>'2026-09-30',start_date=>'2026-09-01',total=>'10.00',quantity=>'5'})};
  my $defaults=SL::SalesReport::form_defaults($key);
  is($defaults->{customer_id},'','no customer is preselected');
  is($defaults->{rowcount},1,'aliases mapped to same article consolidated');
  is($defaults->{qty_1},5,'source quantities summed once');
- is($defaults->{sellprice_1},2.5,'article master price used, not export unit price');
- is($defaults->{taxincluded},0,'article price interpreted as net');
+ is($defaults->{sellprice_1},2,'historical export price used instead of current 2.50 master price');
+ is($defaults->{taxincluded},1,'historical export price interpreted as gross');
  is($defaults->{invdate},'30.09.2026','month end formatted in user locale');
  is($defaults->{invnumber},'','native invoice number assigned only on booking');
 }
+
+# Keep an export with multiple prices separate even when it maps to one Part.
+{
+ no warnings qw(redefine once);
+ local *SL::SalesReport::dbh=sub {$db};
+ local $::form=bless {},'FakeForm';
+ local $db->{row}={content_hash=>'v',mapping=>'{"1":7,"2":7}',source=>'Automat',period=>'2026-09',payment=>'CASH',
+   payload=>JSON::PP->new->encode({schema_version=>2,items=>[
+     {description=>'Cola',tax_rate=>19,quantity=>2,total=>'4.00',unit_gross=>'2.00000'},
+     {description=>'Cola',tax_rate=>19,quantity=>3,total=>'6.60',unit_gross=>'2.20000'}],
+     end_date=>'2026-09-30',start_date=>'2026-09-01',total=>'10.60',quantity=>'5'})};
+ my $defaults=SL::SalesReport::form_defaults($key);
+ is($defaults->{rowcount},2,'different prices retain separate invoice lines');
+ is($defaults->{sellprice_1},2,'old price retained');
+ is($defaults->{sellprice_2},2.2,'new price retained');
+}
+for my $case (
+ ['wrong price',sub {$_[0]{sellprice_1}=2.5}],
+ ['wrong quantity',sub {$_[0]{qty_1}=3}],
+ ['wrong unit',sub {$_[0]{unit_1}='Karton'}],
+ ['discount',sub {$_[0]{discount_1}=10}],
+ ['net mode',sub {$_[0]{taxincluded}=0}],
+ ['extra part',sub {$_[0]{id_2}=8;$_[0]{qty_2}=1;$_[0]{rowcount}=2;$_[0]{unit_2}='Stck';$_[0]{sellprice_2}=2;$_[0]{taxaccounts_2}='1776'}],
+) {
+ my %f=%form; $case->[1]->(\%f);
+ eval { SL::SalesReport::lock_for_post($db,\%f) };
+ ok($@,"reject $case->[0]");
+}
+SL::SalesReport::verify_total($db,\%form,4);
+pass('matching final booking total accepted');
+eval {SL::SalesReport::verify_total($db,\%form,4.01)};
+like($@,qr/Buchungssumme/,'one-cent final discrepancy blocks booking');
+{
+ local $db->{row}{payload}=JSON::PP->new->encode({schema_version=>2,review_issues=>[{message=>'check'}],
+ items=>[{description=>'Cola',tax_rate=>19,quantity=>2,total=>'4.00',unit_gross=>'2.00000'}],total=>'4.00'});
+ eval {SL::SalesReport::lock_for_post($db,\%form)};
+ like($@,qr/Auffaelligkeiten/,'unreviewed anomalous report cannot be booked');
+ local $db->{row}{mapping}='{"1":7,"_review_accepted":1,"_review_note":"Originalwerte geprueft"}';
+ local $form{sales_report_version}=SL::SalesReport::version($db->{row});
+ ok(SL::SalesReport::lock_for_post($db,\%form),'review acknowledged on server-side mapping');
+}
+like($native,qr/verify_total\(\$dbh, \$form, \$amount\)/,'actual booking amount checked inside native transaction');
 done_testing;

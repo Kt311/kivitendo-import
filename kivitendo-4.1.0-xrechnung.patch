@@ -1512,7 +1512,7 @@
 +</form>
 --- /dev/null
 +++ b/scripts/sales_report_import.py
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,297 @@
 +#!/usr/bin/env python3
 +"""Local, strict vending sales report reader. Never posts accounting records."""
 +import csv
@@ -1525,7 +1525,7 @@
 +import sys
 +from collections import defaultdict
 +from datetime import datetime
-+from decimal import Decimal, InvalidOperation
++from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 +from pathlib import Path
 +
 +def number(value):
@@ -1585,7 +1585,7 @@
 +        raise ValueError('CSV-Kopfzeile fehlt. Erwartet: Produkt, Zahlungsart, Steuersatz, Verkaeufe und Summe €.')
 +    reader = csv.DictReader(lines[start:], delimiter=';')
 +    reader.fieldnames = [re.sub(r'^[^A-Za-zÄÖÜäöüß]+', '', s).strip() for s in reader.fieldnames]
-+    result, warnings, seen = [], [], set()
++    result, warnings, seen = [], [], {}
 +    full = 'Zeitpunkt' in reader.fieldnames
 +    for line,r in enumerate(reader, start+2):
 +        if not any(r.values()):
@@ -1604,9 +1604,12 @@
 +                raise ValueError('Nicht abgeschlossener Verkauf.')
 +            stamp = datetime.strptime(r['Zeitpunkt'], '%d.%m.%Y %H:%M')
 +            key = (r.get('Maschine',''), r['Rechnungsnummer'])
-+            if key in seen:
-+                raise ValueError('Mehrfach vorkommende Rechnungsnummer zuerst klaeren: ' + key[1])
-+            seen.add(key)
++            # Receipt numbers are not unique line IDs. Preserve conflicting
++            # rows for review rather than guessing whether either is a duplicate.
++            fingerprint = hashlib.sha256(json.dumps(r,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
++            if fingerprint in seen:
++                raise ValueError('Identische doppelte Exportzeile zuerst klaeren: ' + key[1])
++            seen[fingerprint] = True
 +            match = re.fullmatch(r'(.+?)\s*\((\d+)x\)', r['Artikel'])
 +            if not match:
 +                raise ValueError('Artikelmenge nicht eindeutig.')
@@ -1615,10 +1618,27 @@
 +                raise ValueError('Gemischte oder unbekannte Zahlungsart.')
 +            row=item(stamp.year,stamp.month,match[1],'Bar' if pays[0].lower()=='bar' else 'Bargeldlos',
 +                     r['Steuersatz'],match[2],r['Preis'])
-+            row['machine']=r.get('Maschine','').strip()
++            amounts = re.findall(r'\(([^(),]+(?:,[0-9]{2})?)\s*€\)', r['Zahlungsarten'])
++            if len(amounts) != 1 or number(amounts[0]) != row['total']:
++                raise ValueError('Verkaufspreis und Zahlungsbetrag stimmen nicht eindeutig ueberein.')
++            row.update(machine=r.get('Maschine','').strip(),
++                       observed_at=stamp.isoformat(timespec='minutes'),
++                       receipt=r['Rechnungsnummer'].strip(), selection=r.get('Auswahlnummer','').strip(),
++                       event_id=fingerprint, source_line=line)
++            row['review_issues'] = []
++            if row['total'] / row['quantity'] < Decimal('0.20'):
++                row['review_issues'].append('Ungewoehnlich kleiner Stueckpreis unter 0,20 EUR')
 +            result.append(row)
 +        except (ValueError, KeyError, TypeError) as e:
 +            raise ValueError(f'CSV-Zeile {line}: {e}') from e
++    by_receipt=defaultdict(list)
++    for r in result:
++        if r.get('receipt'):
++            by_receipt[(r['machine'],r['receipt'])].append(r)
++    for key, matches in by_receipt.items():
++        if len(matches)>1:
++            for r in matches:
++                r['review_issues'].append('Rechnungsnummer bei mehreren unterschiedlichen Zeilen: '+key[1])
 +    machines={r.get('machine') for r in result if r.get('machine')}
 +    if len(machines)>1:
 +        raise ValueError('Bitte pro Standort eine Datei hochladen.')
@@ -1668,28 +1688,131 @@
 +    groups={}
 +    for r in rows:
 +        key=(r['year'],r['month'],r['payment'])
-+        group=groups.setdefault(key,{})
-+        rowkey=(r['product'],r['tax_rate'])
-+        value=group.setdefault(rowkey,[Decimal(0),Decimal(0)])
++        group=groups.setdefault(key,{'items':{},'events':[],'issues':[]})
++        unit=(r['total']/r['quantity']).quantize(Decimal('.00001'),rounding=ROUND_HALF_UP)
++        if (unit*r['quantity']).quantize(Decimal('.01'),rounding=ROUND_HALF_UP) != r['total']:
++            raise ValueError('Exportpreis kann mit fuenf Nachkommastellen nicht centgenau abgebildet werden.')
++        rowkey=(r['product'],r['tax_rate'],unit)
++        value=group['items'].setdefault(rowkey,[Decimal(0),Decimal(0),[],set()])
 +        value[0]+=r['quantity'];value[1]+=r['total']
++        if r.get('observed_at'): value[2].append(r['observed_at'])
++        if r.get('selection') and r['selection'] != '-':value[3].add(r['selection'])
++        if r.get('event_id'):
++            event={k:r[k] for k in ('event_id','observed_at','receipt','selection','machine','product','tax_rate')}
++            event.update(quantity=str(r['quantity']),total=str(r['total']),unit_gross=str(unit),
++                         review_issues=r['review_issues'])
++            group['events'].append(event)
++            for issue in r['review_issues']:
++                group['issues'].append(dict(event_id=r['event_id'],receipt=r['receipt'],
++                    observed_at=r['observed_at'],product=r['product'],total=str(r['total']),message=issue))
 +    output=[]
 +    for (y,m,p),data in sorted(groups.items()):
-+        items=[dict(description=n,tax_rate=t,quantity=str(int(q)),total=str(a.quantize(Decimal('.01')))) for (n,t),(q,a) in sorted(data.items())]
-+        if len(items)>500: raise ValueError('Mehr als 500 Artikel pro Monatsrechnung.')
-+        group=dict(year=y,month=m,payment=p,items=items,total=str(sum((v[1] for v in data.values()),Decimal(0)).quantize(Decimal('.01'))),quantity=str(int(sum(v[0] for v in data.values()))),
++        items=[dict(description=n,tax_rate=t,unit_gross=str(price),quantity=str(int(v[0])),
++                    total=str(v[1].quantize(Decimal('.01'))),
++                    first_observed=min(v[2]) if v[2] else '',last_observed=max(v[2]) if v[2] else '',
++                    selections=sorted(v[3]))
++               for (n,t,price),v in sorted(data['items'].items())]
++        # Check rounding again after consolidation, since rounded unit averages
++        # from summary exports must never drift from their original revenue.
++        for i in items:
++            if (Decimal(i['unit_gross'])*Decimal(i['quantity'])).quantize(Decimal('.01'),rounding=ROUND_HALF_UP) != Decimal(i['total']):
++                raise ValueError('Zusammenfassung wuerde den Originalumsatz veraendern. Detaillierten Export verwenden.')
++        if len(items)>500: raise ValueError('Mehr als 500 Artikel-/Preispositionen pro Monatsrechnung.')
++        group=dict(schema_version=2,year=y,month=m,payment=p,items=items,
++                   events=sorted(data['events'],key=lambda e:(e['observed_at'],e['event_id'])),
++                   review_issues=sorted(data['issues'],key=lambda e:(e['observed_at'],e['event_id'],e['message'])),
++                   source_kind='transactions' if data['events'] else 'summary',
++                   total=str(sum((v[1] for v in data['items'].values()),Decimal(0)).quantize(Decimal('.01'))),
++                   quantity=str(int(sum(v[0] for v in data['items'].values()))),
 +                   start_date=f'{y}-{m:02}-01',end_date=f'{y}-{m:02}-{calendar.monthrange(y,m)[1]}')
 +        group['content_hash']=hashlib.sha256(json.dumps(group,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 +        output.append(group)
 +    return dict(groups=output,warnings=warnings,sha256=hashlib.sha256(raw).hexdigest())
 +
++def portfolio(reports):
++    products={}
++    price_observations={}
++    timelines=defaultdict(list)
++    slots=defaultdict(list)
++    issues=[]
++    seen=set()
++    legacy_reports=0
++    for report in reports:
++        source=report['source'];g=report['data']
++        if g.get('schema_version') != 2:
++            legacy_reports+=1
++            continue
++        for i in g['items']:
++            key=(source,i['description'])
++            p=products.setdefault(key,dict(source=source,product=i['description'],quantity=0,
++                revenue=Decimal(0),prices=set(),first_observed='',last_observed=''))
++            p['quantity']+=int(i['quantity']);p['revenue']+=Decimal(i['total'])
++            p['prices'].add(Decimal(i['unit_gross']))
++            dates=[x for x in (p['first_observed'],p['last_observed'],i.get('first_observed'),i.get('last_observed')) if x]
++            if dates:p['first_observed'],p['last_observed']=min(dates),max(dates)
++        for issue in g.get('review_issues',[]):issues.append(dict(source=source,**issue))
++        for e in g.get('events',[]):
++            key=(source,e['event_id'])
++            if key in seen:raise ValueError('Verkaufsereignis in mehreren gespeicherten Berichten. Quellen pruefen.')
++            seen.add(key)
++            key=(source,e['machine'],e['selection'],e['product'],e['unit_gross'])
++            p=price_observations.setdefault(key,dict(source=source,machine=e['machine'],selection=e['selection'],
++                product=e['product'],unit_gross=e['unit_gross'],quantity=0,revenue=Decimal(0),
++                first_observed=e['observed_at'],last_observed=e['observed_at'],review=False))
++            p['quantity']+=int(e['quantity']);p['revenue']+=Decimal(e['total'])
++            p['first_observed']=min(p['first_observed'],e['observed_at'])
++            p['last_observed']=max(p['last_observed'],e['observed_at'])
++            p['review']=p['review'] or bool(e.get('review_issues'))
++            if not e.get('review_issues'):
++                timelines[(source,e['machine'],e['selection'],e['product'])].append(e)
++                if e['selection'] and e['selection'] != '-':slots[(source,e['machine'],e['selection'])].append(e)
++    price_changes=[]
++    for (source,machine,selection,product),events in sorted(timelines.items()):
++        # Unknown slots may conceal simultaneously different prices at different
++        # selections. Show observations but infer no change from those rows.
++        if not selection or selection=='-':continue
++        previous=None
++        for e in sorted(events,key=lambda x:(x['observed_at'],x['event_id'])):
++            if previous and previous['unit_gross'] != e['unit_gross'] and previous['observed_at'] != e['observed_at']:
++                price_changes.append(dict(source=source,machine=machine,selection=selection,product=product,
++                    previous_price=previous['unit_gross'],observed_price=e['unit_gross'],
++                    last_previous=previous['observed_at'],first_observed=e['observed_at']))
++            previous=e
++    product_changes=[]
++    for (source,machine,selection),events in sorted(slots.items()):
++        previous=None
++        for e in sorted(events,key=lambda x:(x['observed_at'],x['event_id'])):
++            if previous and previous['product']!=e['product'] and previous['observed_at'] != e['observed_at']:
++                product_changes.append(dict(source=source,machine=machine,selection=selection,
++                    previous_product=previous['product'],observed_product=e['product'],
++                    last_previous=previous['observed_at'],first_observed=e['observed_at']))
++            previous=e
++    output=[]
++    for key,p in sorted(products.items()):
++        prices=p.pop('prices')
++        p.update(min_price=str(min(prices)),max_price=str(max(prices)),price_count=len(prices),
++                 average_price=str((p['revenue']/p['quantity']).quantize(Decimal('.01'),rounding=ROUND_HALF_UP)),
++                 revenue=str(p['revenue'].quantize(Decimal('.01'))))
++        output.append(p)
++    obs=[]
++    for _,p in sorted(price_observations.items()):
++        p['revenue']=str(p['revenue'].quantize(Decimal('.01')));obs.append(p)
++    return dict(products=output,price_observations=obs,
++                price_changes=sorted(price_changes,key=lambda p:p['first_observed'],reverse=True),
++                product_changes=sorted(product_changes,key=lambda p:p['first_observed'],reverse=True),
++                review_issues=issues,legacy_reports=legacy_reports,
++                revenue=str(sum((Decimal(p['revenue']) for p in output),Decimal(0)).quantize(Decimal('.01'))),
++                quantity=sum(p['quantity'] for p in output))
++
 +if __name__=='__main__':
 +    try:
-+        print(json.dumps(analyze(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else ''),ensure_ascii=False))
++        result=portfolio(json.load(sys.stdin)) if sys.argv[1]=='--portfolio' else analyze(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else '')
++        print(json.dumps(result,ensure_ascii=False))
 +    except Exception as e:
 +        print(json.dumps({'error':str(e)},ensure_ascii=False));sys.exit(1)
 --- /dev/null
 +++ b/SL/SalesReport.pm
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,222 @@
 +package SL::SalesReport;
 +use strict;
 +use warnings;
@@ -1765,18 +1888,10 @@
 +  my $row=load_import($key);
 +  die "Dieser Monatsbericht ist bereits gebucht (Beleg-ID $row->{posted_ar_id})." if $row->{posted_ar_id};
 +  my $g=$row->{data}; my %f;
-+  my (@items,%by_id); my $source_row=0;
-+  for my $item (@{$g->{items}}) {
-+    my $id=$row->{mapped}{++$source_row};
-+    die "Bitte alle Artikel zuordnen." unless $id && $id =~ /^\d+$/;
-+    if ($by_id{$id}) {
-+      die "Derselbe Artikel wurde unterschiedlichen Export-Steuersaetzen zugeordnet." if $by_id{$id}{tax_rate} != $item->{tax_rate};
-+      $by_id{$id}{quantity} += $item->{quantity};
-+    } else {
-+      my $combined={%$item,part_id=>$id};
-+      $by_id{$id}=$combined; push @items,$combined;
-+    }
-+  }
++  die "Alte Importvorbereitung: Originalbericht fuer historische Verkaufspreise erneut hochladen."
++    unless ($g->{schema_version} // 0) == 2;
++  _assert_review($row);
++  my @items = @{ expected_lines($row) };
 +  my $i=0;
 +  for my $item (@items) {
 +    ++$i;
@@ -1788,19 +1903,20 @@
 +    @f{map { "${_}_$i" } qw(id partnumber description unit part_type price_factor_id price_factor)}=
 +      ($p->id,$p->partnumber,$p->description,$p->unit,$p->part_type,$p->price_factor_id,$factor);
 +    $f{"qty_$i"}=$::form->format_amount(\%::myconfig,$item->{quantity},0);
-+    $f{"sellprice_$i"}=$::form->format_amount(\%::myconfig,$p->sellprice // 0,5);
++    $f{"sellprice_$i"}=$::form->format_amount(\%::myconfig,$item->{unit_gross} * $factor,5);
 +    $f{"discount_$i"}='0';
 +    $f{"active_price_source_$i"}='';
 +    $f{"active_discount_source_$i"}='';
 +  }
 +  return { %f, rowcount=>$i, type=>'invoice', vc=>'customer', customer_id=>'', customer=>'', previous_customer_id=>'',
-+    currency=>$::form->get_default_currency(\%::myconfig), taxincluded=>0, taxincluded_changed_by_user=>1,
++    currency=>$::form->get_default_currency(\%::myconfig), taxincluded=>1, taxincluded_changed_by_user=>1,
 +    invdate=>_iso_date($g->{end_date}),
 +    tax_point_start=>_iso_date($g->{start_date}),
 +    tax_point=>_iso_date($g->{end_date}),
 +    sales_report_key=>$key, sales_report_version=>version($row), paidaccounts=>1, invnumber=>'',
 +    transaction_description=>"Automatenverkaeufe $row->{source} $row->{period} $row->{payment}",
-+    intnotes=>"Verkaufsbericht $row->{source}, $row->{period}, $row->{payment}\nOriginalumsatz: $g->{total} EUR brutto; Menge $g->{quantity}.\nImport: $key\nArtikelstammpreise (netto), keine historischen Preise. Mengen in lokaler Artikeleinheit; Gebinde kontrollieren. Keine Zahlungsbuchung. Originaldatei bitte als Beleg anhaengen.",
++    intnotes=>"Verkaufsbericht $row->{source}, $row->{period}, $row->{payment}\nOriginalumsatz: $g->{total} EUR brutto; Menge $g->{quantity}.\nImport: $key\nOriginale Verkaufserloese und Bruttoverkaufspreise aus dem Export; keine Neuberechnung mit Stammpreisen. Mengen in lokaler Artikeleinheit; Gebinde kontrollieren. Keine Zahlungsbuchung. Originaldatei bitte als Beleg anhaengen."
++      . ($row->{mapped}{_review_note} ? "\nExport-Auffaelligkeiten geprueft: $row->{mapped}{_review_note}" : ''),
 +  };
 +}
 +sub lock_for_post {
@@ -1828,7 +1944,90 @@
 +    die "Position $i: Artikelsteuer weicht vom Verkaufsbericht ab ($rates{$id} %). Bitte Zuordnung/Kunde/Buchungsgruppe pruefen."
 +      if abs($rate*100-$rates{$id}) > 0.00001;
 +  }
++  if (($row->{data}{schema_version} // 0) == 2) {
++    _assert_review($row);
++    _assert_original_lines($row,$form);
++  } elsif (!$row->{posted_ar_id}) {
++    die "Alte Importvorbereitung: Originalbericht erneut hochladen.";
++  }
 +  return $row;
++}
++sub _assert_review {
++  my ($row)=@_;
++  die "Export enthaelt Auffaelligkeiten. Erst in der Artikelzuordnung pruefen und begruendet bestaetigen."
++    if @{ $row->{data}{review_issues} || [] }
++      && (!$row->{mapped}{_review_accepted} || !length($row->{mapped}{_review_note} // ''));
++}
++sub expected_lines {
++  my ($row)=@_;
++  my (@items,%by_key); my $source_row=0;
++  for my $item (@{ $row->{data}{items} }) {
++    my $id=$row->{mapped}{++$source_row};
++    die "Bitte alle Artikel zuordnen." unless $id && $id =~ /^\d+$/;
++    die "Originalpreis fehlt. Originalbericht erneut hochladen."
++      unless defined $item->{unit_gross} && defined $item->{total};
++    my $key=join(':',$id,$item->{tax_rate},sprintf('%.5f',$item->{unit_gross}));
++    if (my $existing=$by_key{$key}) {
++      $existing->{quantity}+=$item->{quantity}; $existing->{total}+=$item->{total};
++    } else {
++      my $combined={%$item,part_id=>$id};
++      $by_key{$key}=$combined; push @items,$combined;
++    }
++  }
++  return \@items;
++}
++sub _input_number {
++  my ($form,$field)=@_;
++  return $::form ? $::form->parse_amount(\%::myconfig,$form->{$field} // 0) : 0+($form->{$field} // 0);
++}
++sub _assert_original_lines {
++  my ($row,$form)=@_;
++  die "Verkaufsbericht benoetigt Bruttoeingabe." unless $form->{taxincluded};
++  my (%expected,%actual);
++  for my $i (@{ expected_lines($row) }) {
++    my $key=join(':',$i->{part_id},$i->{tax_rate},sprintf('%.5f',$i->{unit_gross}));
++    $expected{$key}=$i->{quantity};
++  }
++  for my $i (1..($form->{rowcount}||0)) {
++    my $id=$form->{"id_$i"}; next unless $id;
++    my $qty=_input_number($form,"qty_$i"); next unless $qty;
++    die "Rabatte duerfen Originalumsaetze nicht veraendern." if _input_number($form,"discount_$i");
++    my $p=SL::DB::Part->new(id=>$id)->load;
++    my $factor=$p->price_factor_id ? $p->price_factor->factor : 1;
++    die "Artikeleinheit oder Preiseinheit weicht ab."
++      unless ($form->{"unit_$i"}//'') eq ($p->unit//'')
++        && ($form->{"price_factor_id_$i"}//'') eq ($p->price_factor_id//'') && $factor>0;
++    my $price=_input_number($form,"sellprice_$i")/$factor;
++    my $rate=0;
++    $rate+=$form->{"${_}_rate"}//0 for grep {length} split /\s+/,($form->{"taxaccounts_$i"}//'');
++    my $key=join(':',$id,0+sprintf('%.5f',$rate*100),sprintf('%.5f',$price));
++    $actual{$key}+=$qty;
++  }
++  die "Artikel, Mengen oder Verkaufspreise weichen vom Originalbericht ab. Vorbereitung erneut oeffnen."
++    unless keys(%actual)==keys(%expected)
++      && !grep { !exists($actual{$_}) || abs($actual{$_}-$expected{$_})>0.000001 } keys %expected;
++}
++sub verify_total {
++  my ($dbh,$form,$amount)=@_;
++  return unless $form->{sales_report_key};
++  my $row=load_import($form->{sales_report_key},$dbh);
++  return unless ($row->{data}{schema_version}//0)==2;
++  die "Buchungssumme weicht vom Originalumsatz ab. Steuerberechnung und Preiseinheiten pruefen."
++    if abs($amount-$row->{data}{total})>0.004;
++}
++sub portfolio {
++  my ($source)=@_;
++  $source //= '';
++  my $rows=dbh()->selectall_arrayref(
++    'SELECT source,payload,mapping FROM sales_report_imports WHERE (? = \'\' OR source = ?) ORDER BY source,period,payment LIMIT 1001',
++    {Slice=>{}},$source,$source);
++  die "Zu viele Berichte. Bitte einen Standort filtern." if @$rows>1000;
++  my @groups=map { +{source=>$_->{source},data=>json()->decode($_->{payload})} } @$rows;
++  my ($out,$err,$input)=('','',JSON::PP->new->utf8->encode(\@groups));
++  my @cmd=('python3','scripts/sales_report_import.py','--portfolio');
++  my $ok=run \@cmd, \$input, \$out, \$err, timeout(100);
++  die "Portfolioauswertung fehlgeschlagen." unless $ok;
++  return JSON::PP->new->utf8->decode($out);
 +}
 +sub mark_posted {
 +  my ($dbh,$form)=@_;
@@ -1838,7 +2037,7 @@
 +1;
 --- /dev/null
 +++ b/SL/Controller/SalesReport.pm
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,94 @@
 +package SL::Controller::SalesReport;
 +use strict;
 +use warnings;
@@ -1867,6 +2066,11 @@
 +  if (!$ok) { my $error=$@ || 'Import fehlgeschlagen.'; flash('error',$error) }
 +  elsif (@{$data->{warnings}}) { flash('warning',join("\n",@{$data->{warnings}})) }
 +  return $self->action_upload;
++}
++sub action_portfolio {
++  my ($self)=@_;
++  my $data=SL::SalesReport::portfolio($::form->{source});
++  return $self->render('sales_report/portfolio',title=>'Senvend: Produkte und Preisbeobachtungen',data=>$data);
 +}
 +sub action_mapping {
 +  my ($self)=@_;
@@ -1899,6 +2103,12 @@
 +        unless ($::form->{report_version}//'') eq SL::SalesReport::version($row);
 +      die "Bericht bereits gebucht." if $row->{posted_ar_id};
 +      my (%mapping,%chosen); my $i=0;
++      if (@{ $row->{data}{review_issues} || [] }) {
++        my $note=$::form->{review_note} // ''; $note =~ s/^\s+|\s+$//g;
++        die "Auffaelligkeiten zuerst pruefen, bestaetigen und Pruefnotiz ausfuellen."
++          unless $::form->{review_accepted} && length($note)>=10 && length($note)<=2000;
++        $mapping{_review_accepted}=1; $mapping{_review_note}=$note;
++      }
 +      for my $item (@{$row->{data}{items}}) {
 +        ++$i;my $id=$::form->{"mapping_$i"};
 +        die "Position $i: bitte einen Artikel auswaehlen." unless ($id//'') =~ /^\d+$/ && $id>0;
@@ -1961,7 +2171,7 @@
 +    action: SalesReport/upload
 --- /dev/null
 +++ b/templates/design40_webpages/sales_report/upload.html
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,26 @@
 +[% USE L %][% USE HTML %]
 +<h1>[% title | html %]</h1>
 +<div class="wrapper">
@@ -1978,6 +2188,8 @@
 +<button type="submit" name="action" value="SalesReport/import">Bericht einlesen</button>
 +</form>
 +<p>PDF: alle Spalten auf derselben Seite, lesbarer Text. Scans und beliebige Rechnungslayouts werden hier nicht erkannt. CSV: Verkaufsstatistik mit Produkt, Zahlungsart, Steuersatz, Verkaeufe, Summe € oder detaillierter Verkaufsbericht.</p>
++<p><a href="controller.pl?action=SalesReport/portfolio">Produkte und Preisbeobachtungen aus gespeicherten Importen auswerten</a></p>
++<p>Historische Exportpreise werden uebernommen. Auswahlnummern und Verkaufszeitpunkte bleiben bei detaillierten CSVs erhalten. Die Auswahl eines Fachs ist keine feste Produkt-ID; Umbenennungen bitte bewusst zuordnen. Ein Teilmonats-Export ersetzt keine vollstaendige Monatsabrechnung.</p>
 +<h2>Letzte Importvorgaenge</h2>
 +<table class="tbl-list"><thead><tr><th>Quelle</th><th>Monat</th><th>Zahlungsart</th><th>Status</th></tr></thead><tbody>
 +[% FOREACH row=imports %]<tr><td>[% row.source | html %]</td><td>[% row.period | html %]</td><td>[% IF row.payment == 'CASH' %]Bar[% ELSE %]Bargeldlos[% END %]</td><td>
@@ -1988,19 +2200,28 @@
 +</div>
 --- /dev/null
 +++ b/templates/design40_webpages/sales_report/mapping.html
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,24 @@
 +[% USE L %][% USE P %]
 +<h1>[% title | html %]</h1>
 +<div class="wrapper">
 +<p>[% report.source | html %] / [% report.period | html %] / [% report.payment | html %]. Originalumsatz: [% report.data.total | html %] EUR brutto. Menge: [% report.data.quantity | html %].</p>
-+<p>Zuordnungen werden fuer diese Quelle gespeichert. Preise kommen aus dem aktuellen Artikelstamm und sind anschliessend aenderbar. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
++<p>Zuordnungen werden fuer diese Quelle gespeichert. Verwendet werden die urspruenglichen Bruttoverkaufspreise und Umsatzsummen aus dem Export. Unterschiedliche Preise bleiben getrennte Positionen. Stammpreise werden nicht geaendert. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
 +<form method="post" action="controller.pl">
 +[% L.hidden_tag('import_key', report.import_key) %]
 +[% L.hidden_tag('report_version', report.version) %]
-+<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
-+[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
++<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Brutto/Stueck</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
++[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.unit_gross | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
 +</tbody></table>
 +<p>[% L.checkbox_tag('replace_mapping',value=1,label='Abweichende bisherige Zuordnungen bewusst ersetzen.') %]</p>
++[% IF report.data.review_issues.size %]
++<h2>Vor dem Buchen pruefen</h2>
++<p>Originalwerte bleiben erhalten. Die Summe ist bis zur Klaerung vorlaeufig. Abweichende Daten in Senvend klaeren und einen korrigierten Export hochladen; bei begruendet korrekten Werten die Pruefung dokumentieren.</p>
++<table class="tbl-list"><thead><tr><th>Zeitpunkt</th><th>Rechnungsnummer</th><th>Produkt</th><th>Betrag</th><th>Hinweis</th></tr></thead><tbody>
++[% FOREACH issue=report.data.review_issues %]<tr><td>[% issue.observed_at | html %]</td><td>[% issue.receipt | html %]</td><td>[% issue.product | html %]</td><td>[% issue.total | html %]</td><td>[% issue.message | html %]</td></tr>[% END %]
++</tbody></table>
++<p>[% L.checkbox_tag('review_accepted',value=1,label='Ich habe diese Auffaelligkeiten anhand der Originaldaten geprueft; die Exportbetraege sollen unveraendert uebernommen werden.') %]</p>
++<p>Pruefnotiz (mindestens 10 Zeichen): [% L.input_tag('review_note','',size=80,maxlength=2000) %]</p>
++[% END %]
 +<button type="submit" name="action" value="SalesReport/save_mapping">Zuordnungen speichern und Verkaufsrechnung oeffnen</button>
 +</form>
 +</div>
@@ -2086,7 +2307,15 @@
    my $restricter = SL::HTML::Restrict->create;
  
    my ($query, $sth, $null, $project_id, @values);
-@@ -1710,6 +1715,8 @@
+@@ -1524,6 +1529,7 @@
+   }
+ 
+   $amount = $form->round_amount( $netamount + $tax, 2, 1);
++  SL::SalesReport::verify_total($dbh, $form, $amount) if $form->{sales_report_key};
+ 
+   # qr reference
+   my $qr_reference;
+@@ -1710,6 +1716,8 @@
      $shop->connector->set_orderstatus($shop_order->shop_trans_id, "completed");
    }
  
@@ -2378,3 +2607,37 @@
 +-- @description: XML-Steuerbetraege fuer Kreditorenbuchungen dauerhaft erhalten
 +-- @depends: release_3_9_0
 +ALTER TABLE ap ADD COLUMN xml_tax_context text;
+--- /dev/null
++++ b/templates/design40_webpages/sales_report/portfolio.html
+@@ -0,0 +1,31 @@
++[% USE L %]
++<h1>[% title | html %]</h1>
++<div class="wrapper">
++<form method="get" action="controller.pl">[% L.hidden_tag('action','SalesReport/portfolio') %]
++<p>Standort filtern: [% L.input_tag('source',FORM.source,size=45) %] <button type="submit">Anzeigen</button></p></form>
++<p>Aus gespeicherten Importen: [% data.quantity | html %] Stueck / [% data.revenue | html %] EUR brutto. Einschliesslich ungebuchter Vorbereitungen; bei Auffaelligkeiten sind die Summen vorlaeufig.</p>
++<p>Beobachtete Verkaufspreise sind keine hinterlegten Sollpreise. Zeitpunkte belegen Verkaeufe und nicht den genauen Umstellungszeitpunkt. Ohne Auswahlnummer werden keine Fachwechsel abgeleitet. Bezeichnungen sind keine festen Produkt-IDs; Umbenennungen werden nicht automatisch zusammengefuehrt. Margen benoetigen zusaetzliche historische Einkaufskosten.</p>
++[% IF data.legacy_reports %]<p>[% data.legacy_reports | html %] alte Berichte ohne Preishistorie sind nicht in diesen Summen enthalten. Fuer neue Vorbereitungen den Originalexport erneut importieren; gebuchte Altbelege nicht doppelt erfassen.</p>[% END %]
++<h2>Produkte</h2>
++<table class="tbl-list"><thead><tr><th>Standort</th><th>Produkt</th><th>Stueck</th><th>Umsatz brutto</th><th>Durchschnitt/Stueck</th><th>Min.</th><th>Max.</th><th>Preisvarianten</th></tr></thead><tbody>
++[% FOREACH p=data.products %]<tr><td>[% p.source | html %]</td><td>[% p.product | html %]</td><td>[% p.quantity | html %]</td><td>[% p.revenue | html %]</td><td>[% p.average_price | html %]</td><td>[% p.min_price | html %]</td><td>[% p.max_price | html %]</td><td>[% p.price_count | html %]</td></tr>[% END %]
++</tbody></table>
++<h2>Beobachtete Preiswechsel am selben Fach</h2>
++<p>Auffaellige Exportzeilen werden aus der Ableitung von Wechseln ausgelassen, bleiben aber in den Originalumsaetzen enthalten.</p>
++<table class="tbl-list"><thead><tr><th>Standort / Automat</th><th>Fach</th><th>Produkt</th><th>Vorher</th><th>Danach beobachtet</th><th>Letzter Verkauf vorher</th><th>Erster Verkauf danach</th></tr></thead><tbody>
++[% FOREACH p=data.price_changes %]<tr><td>[% p.source | html %] / [% p.machine | html %]</td><td>[% p.selection | html %]</td><td>[% p.product | html %]</td><td>[% p.previous_price | html %]</td><td>[% p.observed_price | html %]</td><td>[% p.last_previous | html %]</td><td>[% p.first_observed | html %]</td></tr>[% END %]
++</tbody></table>
++<h2>Andere Artikelbezeichnung am selben Fach beobachtet</h2>
++<table class="tbl-list"><thead><tr><th>Standort / Automat</th><th>Fach</th><th>Vorher</th><th>Danach</th><th>Letzter Verkauf vorher</th><th>Erster Verkauf danach</th></tr></thead><tbody>
++[% FOREACH p=data.product_changes %]<tr><td>[% p.source | html %] / [% p.machine | html %]</td><td>[% p.selection | html %]</td><td>[% p.previous_product | html %]</td><td>[% p.observed_product | html %]</td><td>[% p.last_previous | html %]</td><td>[% p.first_observed | html %]</td></tr>[% END %]
++</tbody></table>
++<h2>Preisbeobachtungen</h2>
++<table class="tbl-list"><thead><tr><th>Standort</th><th>Automat / Fach</th><th>Produkt</th><th>Preis</th><th>Stueck</th><th>Umsatz</th><th>Erstmals</th><th>Zuletzt</th><th>Pruefung</th></tr></thead><tbody>
++[% FOREACH p=data.price_observations %]<tr><td>[% p.source | html %]</td><td>[% p.machine | html %] / [% p.selection | html %]</td><td>[% p.product | html %]</td><td>[% p.unit_gross | html %]</td><td>[% p.quantity | html %]</td><td>[% p.revenue | html %]</td><td>[% p.first_observed | html %]</td><td>[% p.last_observed | html %]</td><td>[% IF p.review %]Auffaellige Zeile enthalten[% END %]</td></tr>[% END %]
++</tbody></table>
++<h2>Zu pruefende Exportwerte</h2>
++<table class="tbl-list"><thead><tr><th>Standort</th><th>Zeitpunkt</th><th>Rechnungsnummer</th><th>Produkt</th><th>Betrag</th><th>Hinweis</th></tr></thead><tbody>
++[% FOREACH p=data.review_issues %]<tr><td>[% p.source | html %]</td><td>[% p.observed_at | html %]</td><td>[% p.receipt | html %]</td><td>[% p.product | html %]</td><td>[% p.total | html %]</td><td>[% p.message | html %]</td></tr>[% END %]
++</tbody></table>
++<p><a href="controller.pl?action=SalesReport/upload">Zurueck zum Import</a></p>
++</div>

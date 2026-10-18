@@ -73,18 +73,10 @@ sub form_defaults {
   my $row=load_import($key);
   die "Dieser Monatsbericht ist bereits gebucht (Beleg-ID $row->{posted_ar_id})." if $row->{posted_ar_id};
   my $g=$row->{data}; my %f;
-  my (@items,%by_id); my $source_row=0;
-  for my $item (@{$g->{items}}) {
-    my $id=$row->{mapped}{++$source_row};
-    die "Bitte alle Artikel zuordnen." unless $id && $id =~ /^\d+$/;
-    if ($by_id{$id}) {
-      die "Derselbe Artikel wurde unterschiedlichen Export-Steuersaetzen zugeordnet." if $by_id{$id}{tax_rate} != $item->{tax_rate};
-      $by_id{$id}{quantity} += $item->{quantity};
-    } else {
-      my $combined={%$item,part_id=>$id};
-      $by_id{$id}=$combined; push @items,$combined;
-    }
-  }
+  die "Alte Importvorbereitung: Originalbericht fuer historische Verkaufspreise erneut hochladen."
+    unless ($g->{schema_version} // 0) == 2;
+  _assert_review($row);
+  my @items = @{ expected_lines($row) };
   my $i=0;
   for my $item (@items) {
     ++$i;
@@ -96,19 +88,20 @@ sub form_defaults {
     @f{map { "${_}_$i" } qw(id partnumber description unit part_type price_factor_id price_factor)}=
       ($p->id,$p->partnumber,$p->description,$p->unit,$p->part_type,$p->price_factor_id,$factor);
     $f{"qty_$i"}=$::form->format_amount(\%::myconfig,$item->{quantity},0);
-    $f{"sellprice_$i"}=$::form->format_amount(\%::myconfig,$p->sellprice // 0,5);
+    $f{"sellprice_$i"}=$::form->format_amount(\%::myconfig,$item->{unit_gross} * $factor,5);
     $f{"discount_$i"}='0';
     $f{"active_price_source_$i"}='';
     $f{"active_discount_source_$i"}='';
   }
   return { %f, rowcount=>$i, type=>'invoice', vc=>'customer', customer_id=>'', customer=>'', previous_customer_id=>'',
-    currency=>$::form->get_default_currency(\%::myconfig), taxincluded=>0, taxincluded_changed_by_user=>1,
+    currency=>$::form->get_default_currency(\%::myconfig), taxincluded=>1, taxincluded_changed_by_user=>1,
     invdate=>_iso_date($g->{end_date}),
     tax_point_start=>_iso_date($g->{start_date}),
     tax_point=>_iso_date($g->{end_date}),
     sales_report_key=>$key, sales_report_version=>version($row), paidaccounts=>1, invnumber=>'',
     transaction_description=>"Automatenverkaeufe $row->{source} $row->{period} $row->{payment}",
-    intnotes=>"Verkaufsbericht $row->{source}, $row->{period}, $row->{payment}\nOriginalumsatz: $g->{total} EUR brutto; Menge $g->{quantity}.\nImport: $key\nArtikelstammpreise (netto), keine historischen Preise. Mengen in lokaler Artikeleinheit; Gebinde kontrollieren. Keine Zahlungsbuchung. Originaldatei bitte als Beleg anhaengen.",
+    intnotes=>"Verkaufsbericht $row->{source}, $row->{period}, $row->{payment}\nOriginalumsatz: $g->{total} EUR brutto; Menge $g->{quantity}.\nImport: $key\nOriginale Verkaufserloese und Bruttoverkaufspreise aus dem Export; keine Neuberechnung mit Stammpreisen. Mengen in lokaler Artikeleinheit; Gebinde kontrollieren. Keine Zahlungsbuchung. Originaldatei bitte als Beleg anhaengen."
+      . ($row->{mapped}{_review_note} ? "\nExport-Auffaelligkeiten geprueft: $row->{mapped}{_review_note}" : ''),
   };
 }
 sub lock_for_post {
@@ -136,7 +129,90 @@ sub lock_for_post {
     die "Position $i: Artikelsteuer weicht vom Verkaufsbericht ab ($rates{$id} %). Bitte Zuordnung/Kunde/Buchungsgruppe pruefen."
       if abs($rate*100-$rates{$id}) > 0.00001;
   }
+  if (($row->{data}{schema_version} // 0) == 2) {
+    _assert_review($row);
+    _assert_original_lines($row,$form);
+  } elsif (!$row->{posted_ar_id}) {
+    die "Alte Importvorbereitung: Originalbericht erneut hochladen.";
+  }
   return $row;
+}
+sub _assert_review {
+  my ($row)=@_;
+  die "Export enthaelt Auffaelligkeiten. Erst in der Artikelzuordnung pruefen und begruendet bestaetigen."
+    if @{ $row->{data}{review_issues} || [] }
+      && (!$row->{mapped}{_review_accepted} || !length($row->{mapped}{_review_note} // ''));
+}
+sub expected_lines {
+  my ($row)=@_;
+  my (@items,%by_key); my $source_row=0;
+  for my $item (@{ $row->{data}{items} }) {
+    my $id=$row->{mapped}{++$source_row};
+    die "Bitte alle Artikel zuordnen." unless $id && $id =~ /^\d+$/;
+    die "Originalpreis fehlt. Originalbericht erneut hochladen."
+      unless defined $item->{unit_gross} && defined $item->{total};
+    my $key=join(':',$id,$item->{tax_rate},sprintf('%.5f',$item->{unit_gross}));
+    if (my $existing=$by_key{$key}) {
+      $existing->{quantity}+=$item->{quantity}; $existing->{total}+=$item->{total};
+    } else {
+      my $combined={%$item,part_id=>$id};
+      $by_key{$key}=$combined; push @items,$combined;
+    }
+  }
+  return \@items;
+}
+sub _input_number {
+  my ($form,$field)=@_;
+  return $::form ? $::form->parse_amount(\%::myconfig,$form->{$field} // 0) : 0+($form->{$field} // 0);
+}
+sub _assert_original_lines {
+  my ($row,$form)=@_;
+  die "Verkaufsbericht benoetigt Bruttoeingabe." unless $form->{taxincluded};
+  my (%expected,%actual);
+  for my $i (@{ expected_lines($row) }) {
+    my $key=join(':',$i->{part_id},$i->{tax_rate},sprintf('%.5f',$i->{unit_gross}));
+    $expected{$key}=$i->{quantity};
+  }
+  for my $i (1..($form->{rowcount}||0)) {
+    my $id=$form->{"id_$i"}; next unless $id;
+    my $qty=_input_number($form,"qty_$i"); next unless $qty;
+    die "Rabatte duerfen Originalumsaetze nicht veraendern." if _input_number($form,"discount_$i");
+    my $p=SL::DB::Part->new(id=>$id)->load;
+    my $factor=$p->price_factor_id ? $p->price_factor->factor : 1;
+    die "Artikeleinheit oder Preiseinheit weicht ab."
+      unless ($form->{"unit_$i"}//'') eq ($p->unit//'')
+        && ($form->{"price_factor_id_$i"}//'') eq ($p->price_factor_id//'') && $factor>0;
+    my $price=_input_number($form,"sellprice_$i")/$factor;
+    my $rate=0;
+    $rate+=$form->{"${_}_rate"}//0 for grep {length} split /\s+/,($form->{"taxaccounts_$i"}//'');
+    my $key=join(':',$id,0+sprintf('%.5f',$rate*100),sprintf('%.5f',$price));
+    $actual{$key}+=$qty;
+  }
+  die "Artikel, Mengen oder Verkaufspreise weichen vom Originalbericht ab. Vorbereitung erneut oeffnen."
+    unless keys(%actual)==keys(%expected)
+      && !grep { !exists($actual{$_}) || abs($actual{$_}-$expected{$_})>0.000001 } keys %expected;
+}
+sub verify_total {
+  my ($dbh,$form,$amount)=@_;
+  return unless $form->{sales_report_key};
+  my $row=load_import($form->{sales_report_key},$dbh);
+  return unless ($row->{data}{schema_version}//0)==2;
+  die "Buchungssumme weicht vom Originalumsatz ab. Steuerberechnung und Preiseinheiten pruefen."
+    if abs($amount-$row->{data}{total})>0.004;
+}
+sub portfolio {
+  my ($source)=@_;
+  $source //= '';
+  my $rows=dbh()->selectall_arrayref(
+    'SELECT source,payload,mapping FROM sales_report_imports WHERE (? = \'\' OR source = ?) ORDER BY source,period,payment LIMIT 1001',
+    {Slice=>{}},$source,$source);
+  die "Zu viele Berichte. Bitte einen Standort filtern." if @$rows>1000;
+  my @groups=map { +{source=>$_->{source},data=>json()->decode($_->{payload})} } @$rows;
+  my ($out,$err,$input)=('','',JSON::PP->new->utf8->encode(\@groups));
+  my @cmd=('python3','scripts/sales_report_import.py','--portfolio');
+  my $ok=run \@cmd, \$input, \$out, \$err, timeout(100);
+  die "Portfolioauswertung fehlgeschlagen." unless $ok;
+  return JSON::PP->new->utf8->decode($out);
 }
 sub mark_posted {
   my ($dbh,$form)=@_;

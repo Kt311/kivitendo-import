@@ -1529,6 +1529,7 @@ SQL
   }
 
   $amount = $form->round_amount( $netamount + $tax, 2, 1);
+  SL::SalesReport::verify_total($dbh, $form, $amount) if $form->{sales_report_key};
 
   # qr reference
   my $qr_reference;

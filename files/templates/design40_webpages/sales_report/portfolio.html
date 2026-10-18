@@ -1,0 +1,31 @@
+[% USE L %]
+<h1>[% title | html %]</h1>
+<div class="wrapper">
+<form method="get" action="controller.pl">[% L.hidden_tag('action','SalesReport/portfolio') %]
+<p>Standort filtern: [% L.input_tag('source',FORM.source,size=45) %] <button type="submit">Anzeigen</button></p></form>
+<p>Aus gespeicherten Importen: [% data.quantity | html %] Stueck / [% data.revenue | html %] EUR brutto. Einschliesslich ungebuchter Vorbereitungen; bei Auffaelligkeiten sind die Summen vorlaeufig.</p>
+<p>Beobachtete Verkaufspreise sind keine hinterlegten Sollpreise. Zeitpunkte belegen Verkaeufe und nicht den genauen Umstellungszeitpunkt. Ohne Auswahlnummer werden keine Fachwechsel abgeleitet. Bezeichnungen sind keine festen Produkt-IDs; Umbenennungen werden nicht automatisch zusammengefuehrt. Margen benoetigen zusaetzliche historische Einkaufskosten.</p>
+[% IF data.legacy_reports %]<p>[% data.legacy_reports | html %] alte Berichte ohne Preishistorie sind nicht in diesen Summen enthalten. Fuer neue Vorbereitungen den Originalexport erneut importieren; gebuchte Altbelege nicht doppelt erfassen.</p>[% END %]
+<h2>Produkte</h2>
+<table class="tbl-list"><thead><tr><th>Standort</th><th>Produkt</th><th>Stueck</th><th>Umsatz brutto</th><th>Durchschnitt/Stueck</th><th>Min.</th><th>Max.</th><th>Preisvarianten</th></tr></thead><tbody>
+[% FOREACH p=data.products %]<tr><td>[% p.source | html %]</td><td>[% p.product | html %]</td><td>[% p.quantity | html %]</td><td>[% p.revenue | html %]</td><td>[% p.average_price | html %]</td><td>[% p.min_price | html %]</td><td>[% p.max_price | html %]</td><td>[% p.price_count | html %]</td></tr>[% END %]
+</tbody></table>
+<h2>Beobachtete Preiswechsel am selben Fach</h2>
+<p>Auffaellige Exportzeilen werden aus der Ableitung von Wechseln ausgelassen, bleiben aber in den Originalumsaetzen enthalten.</p>
+<table class="tbl-list"><thead><tr><th>Standort / Automat</th><th>Fach</th><th>Produkt</th><th>Vorher</th><th>Danach beobachtet</th><th>Letzter Verkauf vorher</th><th>Erster Verkauf danach</th></tr></thead><tbody>
+[% FOREACH p=data.price_changes %]<tr><td>[% p.source | html %] / [% p.machine | html %]</td><td>[% p.selection | html %]</td><td>[% p.product | html %]</td><td>[% p.previous_price | html %]</td><td>[% p.observed_price | html %]</td><td>[% p.last_previous | html %]</td><td>[% p.first_observed | html %]</td></tr>[% END %]
+</tbody></table>
+<h2>Andere Artikelbezeichnung am selben Fach beobachtet</h2>
+<table class="tbl-list"><thead><tr><th>Standort / Automat</th><th>Fach</th><th>Vorher</th><th>Danach</th><th>Letzter Verkauf vorher</th><th>Erster Verkauf danach</th></tr></thead><tbody>
+[% FOREACH p=data.product_changes %]<tr><td>[% p.source | html %] / [% p.machine | html %]</td><td>[% p.selection | html %]</td><td>[% p.previous_product | html %]</td><td>[% p.observed_product | html %]</td><td>[% p.last_previous | html %]</td><td>[% p.first_observed | html %]</td></tr>[% END %]
+</tbody></table>
+<h2>Preisbeobachtungen</h2>
+<table class="tbl-list"><thead><tr><th>Standort</th><th>Automat / Fach</th><th>Produkt</th><th>Preis</th><th>Stueck</th><th>Umsatz</th><th>Erstmals</th><th>Zuletzt</th><th>Pruefung</th></tr></thead><tbody>
+[% FOREACH p=data.price_observations %]<tr><td>[% p.source | html %]</td><td>[% p.machine | html %] / [% p.selection | html %]</td><td>[% p.product | html %]</td><td>[% p.unit_gross | html %]</td><td>[% p.quantity | html %]</td><td>[% p.revenue | html %]</td><td>[% p.first_observed | html %]</td><td>[% p.last_observed | html %]</td><td>[% IF p.review %]Auffaellige Zeile enthalten[% END %]</td></tr>[% END %]
+</tbody></table>
+<h2>Zu pruefende Exportwerte</h2>
+<table class="tbl-list"><thead><tr><th>Standort</th><th>Zeitpunkt</th><th>Rechnungsnummer</th><th>Produkt</th><th>Betrag</th><th>Hinweis</th></tr></thead><tbody>
+[% FOREACH p=data.review_issues %]<tr><td>[% p.source | html %]</td><td>[% p.observed_at | html %]</td><td>[% p.receipt | html %]</td><td>[% p.product | html %]</td><td>[% p.total | html %]</td><td>[% p.message | html %]</td></tr>[% END %]
+</tbody></table>
+<p><a href="controller.pl?action=SalesReport/upload">Zurueck zum Import</a></p>
+</div>

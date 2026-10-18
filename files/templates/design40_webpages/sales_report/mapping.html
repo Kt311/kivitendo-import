@@ -2,14 +2,23 @@
 <h1>[% title | html %]</h1>
 <div class="wrapper">
 <p>[% report.source | html %] / [% report.period | html %] / [% report.payment | html %]. Originalumsatz: [% report.data.total | html %] EUR brutto. Menge: [% report.data.quantity | html %].</p>
-<p>Zuordnungen werden fuer diese Quelle gespeichert. Preise kommen aus dem aktuellen Artikelstamm und sind anschliessend aenderbar. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
+<p>Zuordnungen werden fuer diese Quelle gespeichert. Verwendet werden die urspruenglichen Bruttoverkaufspreise und Umsatzsummen aus dem Export. Unterschiedliche Preise bleiben getrennte Positionen. Stammpreise werden nicht geaendert. Mengen gelten in der lokalen Artikeleinheit; Gebinde bitte kontrollieren.</p>
 <form method="post" action="controller.pl">
 [% L.hidden_tag('import_key', report.import_key) %]
 [% L.hidden_tag('report_version', report.version) %]
-<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
-[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
+<table class="tbl-list"><thead><tr><th>Exportartikel</th><th>Brutto/Stueck</th><th>Menge</th><th>Steuer</th><th>Originalumsatz</th><th>Kivitendo-Artikel</th><th>Zuordnung</th></tr></thead><tbody>
+[% FOREACH row=rows %]<tr><td>[% row.description | html %]</td><td>[% row.unit_gross | html %]</td><td>[% row.quantity | html %]</td><td>[% row.tax_rate | html %] %</td><td>[% row.total | html %]</td><td>[% P.part.picker('mapping_' _ row.row,row.part,part_type='part,service',status='active',class='wi-wider') %]</td><td>[% row.method | html %]</td></tr>[% END %]
 </tbody></table>
 <p>[% L.checkbox_tag('replace_mapping',value=1,label='Abweichende bisherige Zuordnungen bewusst ersetzen.') %]</p>
+[% IF report.data.review_issues.size %]
+<h2>Vor dem Buchen pruefen</h2>
+<p>Originalwerte bleiben erhalten. Die Summe ist bis zur Klaerung vorlaeufig. Abweichende Daten in Senvend klaeren und einen korrigierten Export hochladen; bei begruendet korrekten Werten die Pruefung dokumentieren.</p>
+<table class="tbl-list"><thead><tr><th>Zeitpunkt</th><th>Rechnungsnummer</th><th>Produkt</th><th>Betrag</th><th>Hinweis</th></tr></thead><tbody>
+[% FOREACH issue=report.data.review_issues %]<tr><td>[% issue.observed_at | html %]</td><td>[% issue.receipt | html %]</td><td>[% issue.product | html %]</td><td>[% issue.total | html %]</td><td>[% issue.message | html %]</td></tr>[% END %]
+</tbody></table>
+<p>[% L.checkbox_tag('review_accepted',value=1,label='Ich habe diese Auffaelligkeiten anhand der Originaldaten geprueft; die Exportbetraege sollen unveraendert uebernommen werden.') %]</p>
+<p>Pruefnotiz (mindestens 10 Zeichen): [% L.input_tag('review_note','',size=80,maxlength=2000) %]</p>
+[% END %]
 <button type="submit" name="action" value="SalesReport/save_mapping">Zuordnungen speichern und Verkaufsrechnung oeffnen</button>
 </form>
 </div>

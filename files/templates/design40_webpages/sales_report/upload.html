@@ -14,6 +14,8 @@
 <button type="submit" name="action" value="SalesReport/import">Bericht einlesen</button>
 </form>
 <p>PDF: alle Spalten auf derselben Seite, lesbarer Text. Scans und beliebige Rechnungslayouts werden hier nicht erkannt. CSV: Verkaufsstatistik mit Produkt, Zahlungsart, Steuersatz, Verkaeufe, Summe € oder detaillierter Verkaufsbericht.</p>
+<p><a href="controller.pl?action=SalesReport/portfolio">Produkte und Preisbeobachtungen aus gespeicherten Importen auswerten</a></p>
+<p>Historische Exportpreise werden uebernommen. Auswahlnummern und Verkaufszeitpunkte bleiben bei detaillierten CSVs erhalten. Die Auswahl eines Fachs ist keine feste Produkt-ID; Umbenennungen bitte bewusst zuordnen. Ein Teilmonats-Export ersetzt keine vollstaendige Monatsabrechnung.</p>
 <h2>Letzte Importvorgaenge</h2>
 <table class="tbl-list"><thead><tr><th>Quelle</th><th>Monat</th><th>Zahlungsart</th><th>Status</th></tr></thead><tbody>
 [% FOREACH row=imports %]<tr><td>[% row.source | html %]</td><td>[% row.period | html %]</td><td>[% IF row.payment == 'CASH' %]Bar[% ELSE %]Bargeldlos[% END %]</td><td>

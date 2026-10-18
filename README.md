@@ -1,6 +1,6 @@
 # kivitendo Import-Erweiterung
 
-Import-Erweiterung **v6.2 für kivitendo ERP 4.1.0**. Enthält Quellcode,
+Import-Erweiterung **v6.4 für kivitendo ERP 4.1.0**. Enthält Quellcode,
 geprüften Installer und Tests. Eigenständiges Community-Patchpaket, kein
 offizielles kivitendo-Release und keine vollständige ERP-Installation.
 
@@ -11,9 +11,12 @@ offizielles kivitendo-Release und keine vollständige ERP-Installation.
   OCR-Unterstützung. Die regelbasierte Erkennung unterstützt nicht jedes Layout.
 - CSV- und unterstützte textbasierte PDF-Verkaufsberichte einlesen.
 - Verkaufspositionen nach Quelle, Monat und Zahlungsart zusammenfassen.
-- Artikelzuordnungen speichern; aktuelle Verkaufspreise aus dem Artikelstamm
-  vorbelegen. Historische Preise werden nicht aus dem Belegdatum rekonstruiert.
-- Kunden in der Verkaufsrechnung auswählen; Preise vor dem Buchen bearbeiten.
+- Artikelzuordnungen speichern; historische Bruttoverkaufspreise und erfasste
+  Umsaetze aus dem Export uebernehmen, Preisvarianten getrennt halten.
+- Kunden in der Verkaufsrechnung auswählen; Originalpreise und -mengen vor dem
+  Buchen gegen versehentliche Aenderungen absichern.
+- Portfolioauswertung: Absatz, Bruttoumsatz, Preisbeobachtungen und beobachtete
+  Produktbezeichnungswechsel je Automat/Fach, soweit im Export enthalten.
 - Wiederholte Verkaufsimporte derselben Quelle/Periode/Zahlungsart erkennen.
   Bereits gebuchte Vorgänge gegen erneutes Buchen über diesen Import schützen.
 
@@ -24,7 +27,7 @@ Test mit Datenbank, Steuereinstellungen und Weboberfläche.
 ## Voraussetzungen
 
 - kivitendo **4.1.0**, unveränderter passender Quellstand oder bekannte
-  Paketversion 1 bis 6.1. Abweichende lokale Änderungen stoppt der Installer.
+  Paketversion 1 bis 6.3. Abweichende lokale Änderungen stoppt der Installer.
 - Python **3.9 oder neuer** (Installer und Parser), bestehende kivitendo-Perl-Umgebung.
 - Poppler für PDF, IPC::Run für den Aufruf des Parsers; Tesseract für OCR.
 
@@ -49,8 +52,11 @@ sudo systemctl restart apache2
 Bei anderer Betriebsart die entsprechenden kivitendo-Anwendungsprozesse neu starten.
 Kein vorheriger Rollback erforderlich. Erstinstallation der Verkaufsfunktion:
 neu anmelden und das von kivitendo angebotene Mandanten-Datenbankupdate ausführen.
-Der Installer führt SQL nicht selbst aus. Version 6.2 benötigt gegenüber 6/6.1
-keine zusätzliche Datenbankmigration.
+Der Installer führt SQL nicht selbst aus. **Version 6.3 benötigt das neue
+Mandanten-Datenbankupdate `xml_tax_rounding`.** Nach dem Neustart neu anmelden
+und das angebotene Datenbankupdate ausführen, bevor Kreditorenbuchungen bearbeitet
+werden. Das zusätzliche Feld speichert die XML-Steuerwerte am gebuchten Beleg.
+Version 6.4 benoetigt gegenueber 6.3 keine weitere Datenbankmigration.
 
 ## Verkaufsbericht verwenden
 
@@ -63,11 +69,40 @@ keine zusätzliche Datenbankmigration.
 6. In der Verkaufsrechnung den passenden Kunden auswählen, Mengen, Preise,
    Einheiten und Steuern prüfen; erst dann manuell buchen.
 
-Der Import bucht und bezahlt nicht automatisch. Artikelstammpreise sind netto;
-ursprüngliche Bruttoumsätze dienen zum Vergleich. Bei Preisänderungen sind
-Abweichungen möglich. Wiederöffnen einer Vorbereitung lädt aktuelle Stammpreise
-erneut und stellt ungebuchte manuelle Maskenänderungen nicht wieder her.
-Originalbelege separat an der Rechnung hinterlegen.
+Der Import bucht und bezahlt nicht automatisch. **Seit 6.4 stammen die Preise
+und Umsatzbetraege aus dem Export, nicht mehr aus dem aktuellen Artikelstamm.**
+Unterschiedliche Verkaufspreise desselben Artikels bleiben getrennte Positionen.
+Gleiche Artikelzuordnungen werden nur bei gleichem Preis und Steuersatz gebuendelt.
+Der Artikelstamm liefert Kontierung und Einheiten, wird aber nicht umgeschrieben.
+Die Mengen muessen in der zugeordneten lokalen Artikeleinheit stimmen.
+
+Vor dem Buchen werden Artikel, Mengen, Preise, Einheiten, Steuersaetze, Rabatte
+und der tatsaechlich berechnete Gesamtbetrag kontrolliert. Abweichungen stoppen
+die Buchung innerhalb der bestehenden Datenbanktransaktion. Ein anderer Preis
+muss im Ursprung geklaert und durch einen korrigierten Export eingebracht werden.
+Alte ungebuchte Vorbereitungen (vor 6.4) muessen neu importiert werden; bereits
+gebuchte Altbelege bleiben geschuetzt und werden nicht rueckwirkend korrigiert.
+Originalbelege separat an der Rechnung hinterlegen. Die Teilmonatsdatei belegt
+nur enthaltene Verkaeufe; Vollstaendigkeit und Steuersummen anhand der monatlichen
+Senvend-Abrechnung abgleichen. Die CSV enthaelt keine ausgewiesenen Steuerbetraege.
+
+Ueber **Produkte und Preisbeobachtungen** im Importfenster laesst sich das
+Portfolio aus gespeicherten neuen Importen auswerten. Erfasst werden Artikelname,
+Menge, Umsatz, Preisvarianten, erster/letzter Verkaufszeitpunkt, Automat und Fach.
+Beobachtete Wechsel werden nur innerhalb eines bekannten Fachs abgeleitet;
+das Zeitintervall ist kein Beweis fuer den genauen Umstellungszeitpunkt. Ein
+Fachwechsel der Bezeichnung kann auch eine Umbenennung sein. Die CSV hat keine
+festen Produkt-IDs/EANs: verschiedene Namen werden nicht automatisch gleichgesetzt.
+Margen und Deckungsbeitraege benoetigen zusaetzliche historische Einkaufskosten.
+Keine automatische Rueckuebertragung nach Senvend und kein laufender API-Abruf.
+
+Preisbetraege unter 0,20 EUR sowie unterschiedliche Zeilen mit derselben
+Rechnungsnummer werden fuer eine dokumentierte Pruefung markiert. Originalwerte
+bleiben erhalten. Eine betroffene Monats-/Zahlungsartvorbereitung ist erst nach
+bewusster Bestaetigung und Pruefnotiz oeffnungs- und buchbar. Identische doppelte
+Zeilen werden zur Klaerung abgewiesen. Eindeutig abgebrochene Ausgaben ohne Preis
+werden mit Hinweis ausgelassen. Gemischte Zahlungen, Stornos/Rueckzahlungen und
+mehrdeutige Warenkoerbe werden nicht automatisch aufgeteilt.
 
 Die Option zum Ersetzen offener Monatsberichte nur für bewusste Korrekturen
 verwenden. Alte Rechnungs-Tabs werden dadurch ungültig. Gebuchte Vorgänge bleiben
@@ -86,11 +121,48 @@ Jahr;Monat;Produkt;Zahlungsart;Steuersatz;Verkäufe;Summe €
 
 Auch der unterstützte detaillierte Verkaufsbericht mit Zeitpunkt,
 Rechnungsnummer, Status, Artikel, Preis, Steuersatz und Zahlungsarten kann
-eingelesen werden. Mehrdeutige Rechnungsnummern werden zurückgewiesen.
+eingelesen werden. Mehrfach belegte Rechnungsnummern mit unterschiedlichen
+Positionen werden zur Pruefung markiert, nicht stillschweigend geloescht.
+Statistikexporte ergeben bei gemischten Preisen ggf. nur Durchschnittspreise;
+fuer einen zeitlichen Preisverlauf ist der detaillierte Verkaufsexport noetig.
 PDF-Verkaufsberichte benötigen lesbaren Text und zusammenhängende Spalten;
 gescannte Verkaufsberichte und beliebige PDF-Layouts werden nicht unterstützt.
 
 ## Einkaufsimport
+
+### XML-Rundungsabgleich in Kreditorenbuchungen (v6.3)
+
+Bei XML-Rechnungen (Typ 380, Steuerkategorien S/Z/E) werden die ausgewiesenen
+Steuerbeträge je Steuersatz beim **Aktualisieren und Buchen** erhalten. Der
+Abgleich verändert ausschließlich Steuerzeilen um höchstens einen Cent pro
+Zeile; Nettobeträge, Mengen, Konten und Steuerschlüssel bleiben erhalten. Die
+XML-Steuer je Gruppe darf höchstens einen Cent von der gerundeten Steuerbasis
+abweichen. Größere Differenzen sowie geänderte Nettosummen, Steuersätze,
+Lieferanten, Rechnungsnummern oder Währungen stoppen den Abgleich.
+
+Beispiel: 120,73 EUR netto und XML-Steuerbeträge 4,57 EUR (7 %) plus 10,54 EUR
+(19 %) ergeben 135,84 EUR. Sowohl Einzelpositionen als auch zusammengefasste
+Buchungszeilen behalten dieses Ergebnis. Beim Buchen wird der Kontext innerhalb
+derselben Datenbanktransaktion gespeichert und beim späteren Bearbeiten erneut
+verwendet. Ohne XML-Kontext arbeiten gewöhnliche Kreditorenbuchungen wie bisher.
+Der CII-Parser verwendet `GrandTotalAmount` als Rechnungsbrutto; `DuePayableAmount`
+ist der separate offene Zahlbetrag. Vorauszahlungen werden nicht automatisch gebucht.
+
+Geltungsbereich: **Kreditorenbuchung (`ap.pl`)**, Nettoeingabe und keine
+Währungsumrechnung. Artikelbasierte Einkaufsrechnungen (`ir.pl`) haben einen
+anderen Rechenweg und sind von diesem Rundungsabgleich nicht erfasst. Die
+CII-Korrektur der Rechnungssumme gilt für beide Importwege. Buchungen, die schon
+vor Version 6.3 erstellt wurden, erhalten nicht rückwirkend XML-Steuerdaten.
+Vorhandene Belege werden nicht automatisch verändert. Bei ungebuchten alten
+Import-Tabs nach dem Update die XML erneut importieren. Bereits gebuchte
+Altbelege anhand des Originalbelegs prüfen und über den regulären Korrekturweg
+berichtigen; keine zweite Rechnung mit derselben Nummer anlegen.
+
+Die zusätzlichen Rundungstests verwenden Ersatzobjekte für Datenbank und
+Sitzungsdateien sowie die originalen 4.1.0-Rechenfunktionen. Eine vollständige
+Buchung im eigenen Testmandanten einschließlich Datenbankupdate und erneutem
+Öffnen bleibt vor dem Produktiveinsatz erforderlich.
+
 
 Den bestehenden ZUGFeRD-/XML-Import öffnen. Für Artikelpositionen die Option
 **Als Einkaufsrechnung mit Artikelpositionen importieren** aktivieren und
@@ -104,6 +176,7 @@ Prüfmaske; erkannte Werte stets mit dem Original vergleichen.
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 perl tests/sales_report.t files
 perl tests/price_rules_without_customer.t files
+perl tests/xml_tax_rounding.t
 python3 tools/build_release.py
 ```
 
@@ -141,13 +214,13 @@ Im Paketordner:
 ```sh
 git init -b main
 git add .
-git commit -m "Initial import: kivitendo 4.1.0 import extension v6.2"
+git commit -m "Initial import: kivitendo 4.1.0 import extension v6.4"
 git remote add origin https://github.com/DEIN-BENUTZERNAME/kivitendo-import.git
 git push -u origin main
 ```
 
 `DEIN-BENUTZERNAME` ersetzen. Für ein Release nach erfolgreicher Prüfung den Tag
-`v6.2.0` erstellen und das mit `tools/build_release.py` erzeugte ZIP anhängen.
+`v6.4.0` erstellen und das mit `tools/build_release.py` erzeugte ZIP anhängen.
 
 ## Lizenz und Herkunft
 

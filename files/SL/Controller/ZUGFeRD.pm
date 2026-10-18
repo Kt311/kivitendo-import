@@ -344,6 +344,12 @@ sub _redirect_to_invoice_form {
     $form_defaults->{intnotes} .= "\n" . $warning;
     flash_later("warning", $warning);
   }
+  if ($controller eq 'ap.pl') {
+    require SL::XMLTaxRounding;
+    $form_defaults->{xml_tax_context_file} = SL::XMLTaxRounding->prepare(
+      $res->{invoice_xml}, $form_defaults,
+    );
+  }
   $form_defaults->{zugferd_session_file} = $file_name;
   $form_defaults->{callback}             = $self->url_for(action => 'upload_zugferd');
 

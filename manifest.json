@@ -1,5 +1,5 @@
 {
-  "version": "4.1.0-xrechnung-6.2",
+  "version": "4.1.0-xrechnung-6.4",
   "files": {
     "SL/PDFInvoice.pm": {
       "before": null,
@@ -15,7 +15,7 @@
     },
     "SL/Controller/ZUGFeRD.pm": {
       "before": "7a681d34c07ca62f5e108e8a2bcdacb2416500ac37cfe9c8afff5dcf8b8c4d81",
-      "after": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a"
+      "after": "c7c13debda12daff9f9a8e60512ebc23119a6c18794770cec277ed2e635b09c4"
     },
     "SL/XMLInvoice/UBL.pm": {
       "before": "925f5de671f792babd52ad3d1a35282da1eec790e403f9103ed8e9c18983c215",
@@ -35,15 +35,15 @@
     },
     "scripts/sales_report_import.py": {
       "before": null,
-      "after": "ba1e99248e6fdce67aee76dd6e85bdc1719d121a3f5641d04c797f96a361a592"
+      "after": "77f924a3b7f5b8ab49dfb4ff1d5344a58c4df71fab2bd789c2a1dfcb1c898b1e"
     },
     "SL/SalesReport.pm": {
       "before": null,
-      "after": "d3845d511b3e5f832163d4deaebed2ae60a3a4cb96cd9fece66737489a2904b0"
+      "after": "0074b1961ba184dc36093790464b446a710d76aae385fd8e8529ff86c0bd8cb3"
     },
     "SL/Controller/SalesReport.pm": {
       "before": null,
-      "after": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae"
+      "after": "334a54b75023ac48a0f168cf9b4e5f7badf99d377cf9f07e561aa2b055b48351"
     },
     "sql/Pg-upgrade2/sales_report_import.sql": {
       "before": null,
@@ -55,11 +55,11 @@
     },
     "templates/design40_webpages/sales_report/upload.html": {
       "before": null,
-      "after": "160562c4f0c19fe3ab3aea457223e9048edb7abe44bc60a0794820ea8a3e1811"
+      "after": "1cf9d7bfe58e5b7cbc1f45baea9ca8250ed6b76311ba5d3abff4f9ce6058c227"
     },
     "templates/design40_webpages/sales_report/mapping.html": {
       "before": null,
-      "after": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23"
+      "after": "4f9a4056fe4d60b03badf4d9eff8c1ddf417000b8360169e1a1592ff38896efc"
     },
     "bin/mozilla/is.pl": {
       "before": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
@@ -67,7 +67,7 @@
     },
     "SL/IS.pm": {
       "before": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
-      "after": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40"
+      "after": "4bcc697377b708e7797aa1d871e154be674e64c4c161b931d9353938ca8e47af"
     },
     "templates/design40_webpages/is/form_footer.html": {
       "before": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
@@ -76,6 +76,34 @@
     "SL/PriceSource/PriceRules.pm": {
       "before": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
       "after": "3a9e62398ad284a6b5ac69dd66509600a3577c443a7d083c7ff248cad64f32f7"
+    },
+    "SL/AP.pm": {
+      "before": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "after": "7dd86bdb87d480f514465969e0bcd848256e9577c4dbc8b26b0d50807e092b64"
+    },
+    "bin/mozilla/ap.pl": {
+      "before": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "after": "5fc9f5d1fea3bdd78bb1144542832831db37f7e57f863095e45167d796cd56f3"
+    },
+    "SL/XMLInvoice/CrossIndustryInvoice.pm": {
+      "before": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "after": "b842e7de19c943179f3abc7da6aa34ed58c491f595b3ce5c1faaf2c7c4ab53d8"
+    },
+    "templates/design40_webpages/ap/form_header.html": {
+      "before": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "after": "528e0b777a7db8476f1d2e5c739683c9f16d083127cb5d55764594d238f7ee37"
+    },
+    "SL/XMLTaxRounding.pm": {
+      "before": null,
+      "after": "dfa14eb73dec4c39a21ea38fd82658abbac93a7b27eee1b06a150fdb614d1116"
+    },
+    "sql/Pg-upgrade2/xml_tax_rounding.sql": {
+      "before": null,
+      "after": "f485b53466dce07e3443925c748d1382c37d54a4332e80b2d8f3f6b72ecdcb30"
+    },
+    "templates/design40_webpages/sales_report/portfolio.html": {
+      "before": null,
+      "after": "61b44b19faf9ea6f37aebe695c20492a25959aa17241cc64364b55972dd9bfca"
     }
   },
   "compatible_versions": {
@@ -98,7 +126,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-2": {
       "SL/Controller/ZUGFeRD.pm": "30eb287e68993636b84eea144ea34201ffa4621940683728a943461b225237bd",
@@ -119,7 +154,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-3": {
       "SL/Controller/ZUGFeRD.pm": "30eb287e68993636b84eea144ea34201ffa4621940683728a943461b225237bd",
@@ -140,7 +182,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-4": {
       "SL/Controller/ZUGFeRD.pm": "07a7c38f75c22a2592e553a88418088b41bf1a13f4fdf76b2e2c0f5e788b8ea6",
@@ -161,7 +210,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-5": {
       "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
@@ -182,7 +238,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-5.1": {
       "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
@@ -203,7 +266,14 @@
       "bin/mozilla/is.pl": "3759e7f7cde10c0e60ca5934b79b69aa56419814b870ebdb04db513c54353da5",
       "SL/IS.pm": "e685b72b5918666ffa03c3102f004ce31ca1ebff137856659083e565593eb624",
       "templates/design40_webpages/is/form_footer.html": "49b1625787a849e04a8fc9ccaf403f2cba8627bb48368043d4dd1db5b227e2ad",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-6": {
       "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
@@ -224,7 +294,14 @@
       "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
       "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
       "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
     },
     "4.1.0-xrechnung-6.1": {
       "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
@@ -245,7 +322,70 @@
       "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
       "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
       "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
-      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f"
+      "SL/PriceSource/PriceRules.pm": "efdf6188f918e51209ffdd33ad25060d51df8fe7f9693da2e27245a65fc00b2f",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
+    },
+    "4.1.0-xrechnung-6.2": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "1274cde8e2d1107f69261beeb01e53c3930212deb78ba2919c28a207ae13a86a",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": "ba1e99248e6fdce67aee76dd6e85bdc1719d121a3f5641d04c797f96a361a592",
+      "SL/SalesReport.pm": "d3845d511b3e5f832163d4deaebed2ae60a3a4cb96cd9fece66737489a2904b0",
+      "SL/Controller/SalesReport.pm": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae",
+      "sql/Pg-upgrade2/sales_report_import.sql": "2342e28e90db51109623b5e457043c194c77b03bda2be36047ed3be10483233f",
+      "menus/user/90-sales-report.yaml": "b631dc2ad1bd7f8b7d16200159adf4ce578ef4557e765668fbc373de5808efb5",
+      "templates/design40_webpages/sales_report/upload.html": "160562c4f0c19fe3ab3aea457223e9048edb7abe44bc60a0794820ea8a3e1811",
+      "templates/design40_webpages/sales_report/mapping.html": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23",
+      "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
+      "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
+      "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
+      "SL/PriceSource/PriceRules.pm": "3a9e62398ad284a6b5ac69dd66509600a3577c443a7d083c7ff248cad64f32f7",
+      "SL/AP.pm": "2244aa777b1d17bd1e5604f3fa0794b05613635b96833bf021dc3e3e60a722bc",
+      "bin/mozilla/ap.pl": "96c37942fc67207efb038570207e7ae2b9eca5e914c4dacfb168d61dcfa93ed8",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b508a1b534ed2e00275c2ff1c67e84af4205a788c7dec8305bdb572cf604861c",
+      "templates/design40_webpages/ap/form_header.html": "945572bf2c4af68bc146e186573dfefe222f34b7a0862735fa753992f1c8afdd",
+      "SL/XMLTaxRounding.pm": null,
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": null,
+      "templates/design40_webpages/sales_report/portfolio.html": null
+    },
+    "4.1.0-xrechnung-6.3": {
+      "SL/PDFInvoice.pm": "bd8629b55a42958532314933079f78df72ef08118bfb027ad911322f9683d21b",
+      "scripts/pdf_invoice_review.py": "a58a7965f798956d4bd1043d10f5d2d352373945698c66b7c86470b9858fce4c",
+      "templates/design40_webpages/zugferd/pdf_review.html": "72d937acf3e9e3ab144b2bbd8f9461eac0178db7176ef7346ae43037dc3f6037",
+      "SL/Controller/ZUGFeRD.pm": "c7c13debda12daff9f9a8e60512ebc23119a6c18794770cec277ed2e635b09c4",
+      "SL/XMLInvoice/UBL.pm": "4b7dbf49a4373a7b6c687fa570723404b0c3caad890dc6cbae705b0dba495499",
+      "bin/mozilla/ir.pl": "053417711a07e64348b607c1be913e423b05e87c42e0c8df3141b38c8c72882c",
+      "templates/design40_webpages/zugferd/form.html": "e266c84c349d214c826354473d7b4888d074c16732b1da8f15a457f38cf6f233",
+      "templates/design40_webpages/zugferd/mapping.html": "722c51cdfab318fa52bccbfc8cf684c355ba33c980eb5af8b5e7e23cb9805235",
+      "scripts/sales_report_import.py": "ba1e99248e6fdce67aee76dd6e85bdc1719d121a3f5641d04c797f96a361a592",
+      "SL/SalesReport.pm": "d3845d511b3e5f832163d4deaebed2ae60a3a4cb96cd9fece66737489a2904b0",
+      "SL/Controller/SalesReport.pm": "3ed59cba862a0b76fb703ac88851d4cb9bfb0789a8ff87edd19781bd98da6fae",
+      "sql/Pg-upgrade2/sales_report_import.sql": "2342e28e90db51109623b5e457043c194c77b03bda2be36047ed3be10483233f",
+      "menus/user/90-sales-report.yaml": "b631dc2ad1bd7f8b7d16200159adf4ce578ef4557e765668fbc373de5808efb5",
+      "templates/design40_webpages/sales_report/upload.html": "160562c4f0c19fe3ab3aea457223e9048edb7abe44bc60a0794820ea8a3e1811",
+      "templates/design40_webpages/sales_report/mapping.html": "e251cc1a011a7f71b9102ff2e95211af0e077ae21c2041293dcb58287759fa23",
+      "bin/mozilla/is.pl": "6e3121f249962e6be2861eb089523759de1d913db2b4e21194b3404744feb2ee",
+      "SL/IS.pm": "7147fbadda1844a4431759adee66dbe6a99d81729782ac95c48bb56176615f40",
+      "templates/design40_webpages/is/form_footer.html": "5183debcda1be002f1847e82e609cfeb234aa1f2889fd58888c98c014df13525",
+      "SL/PriceSource/PriceRules.pm": "3a9e62398ad284a6b5ac69dd66509600a3577c443a7d083c7ff248cad64f32f7",
+      "SL/AP.pm": "7dd86bdb87d480f514465969e0bcd848256e9577c4dbc8b26b0d50807e092b64",
+      "bin/mozilla/ap.pl": "5fc9f5d1fea3bdd78bb1144542832831db37f7e57f863095e45167d796cd56f3",
+      "SL/XMLInvoice/CrossIndustryInvoice.pm": "b842e7de19c943179f3abc7da6aa34ed58c491f595b3ce5c1faaf2c7c4ab53d8",
+      "templates/design40_webpages/ap/form_header.html": "528e0b777a7db8476f1d2e5c739683c9f16d083127cb5d55764594d238f7ee37",
+      "SL/XMLTaxRounding.pm": "dfa14eb73dec4c39a21ea38fd82658abbac93a7b27eee1b06a150fdb614d1116",
+      "sql/Pg-upgrade2/xml_tax_rounding.sql": "f485b53466dce07e3443925c748d1382c37d54a4332e80b2d8f3f6b72ecdcb30",
+      "templates/design40_webpages/sales_report/portfolio.html": null
     }
   }
 }

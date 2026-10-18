@@ -1,5 +1,36 @@
 # Änderungen
 
+## 6.4 – 2026-10-18
+
+- Historische Verkaufspreise und Bruttoumsaetze aus Senvend-Exporten statt
+  aktueller Artikelstammpreise uebernehmen; Preisvarianten getrennt halten.
+- Verkaufsereignisse mit Zeitpunkt, Automat, Fach und Rechnungsnummer in
+  Importvorbereitungen erhalten; keine erfundenen Produkt-IDs.
+- Portfolioauswertung fuer Absatz, Umsatz, Preisbeobachtungen und beobachtete
+  Bezeichnungswechsel am selben Fach ergaenzen.
+- Auffaellige Kleinbetraege und widerspruechliche Rechnungsnummern sichtbar
+  zur dokumentierten Pruefung sperren; Werte nicht automatisch korrigieren.
+- Buchungspruefung fuer Mengen, Artikel, Originalpreise, Einheiten, Rabatte
+  und den finalen Gesamtbetrag; keine automatische Zahlungsbuchung.
+- Alte ungebuchte Vorbereitungen muessen neu importiert werden. Gebuchte
+  Altbelege werden nicht veraendert. Keine neue Migration gegenueber 6.3.
+
+## 6.3 – 2026-10-18
+
+- XML-Steuerbeträge in Kreditorenbuchungen beim Aktualisieren und Buchen
+  anhand der Original-Steuergruppen kontrolliert abgleichen.
+- Rundungskontext transaktionssicher am Beleg speichern; erneutes Bearbeiten
+  benötigt die ursprüngliche Sitzung nicht mehr.
+- Nettosummen und Steuersätze prüfen, größere Differenzen zurückweisen.
+- CII-Rechnungsbrutto aus GrandTotalAmount statt DuePayableAmount lesen;
+  Vorauszahlung und offenen Zahlbetrag getrennt auslesen.
+- Steuerzuordnung aus XML beim Laden einer Buchungsvorlage beibehalten.
+- Neues Mandanten-Datenbankupdate xml_tax_rounding erforderlich.
+- Tests für Aktualisieren, wiederholtes Aktualisieren, Buchen, Wiederöffnen,
+  zusammengefasste Gruppen und ungültige Abweichungen hinzugefügt.
+
+# Änderungen
+
 ## 6.2
 - Preisregeln erst bei vorhandenem Kunden/Lieferanten abfragen.
 - Leeres Ergebnis vor Kundenauswahl nicht zwischenspeichern.
